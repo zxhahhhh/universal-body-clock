@@ -2125,9 +2125,11 @@ const ZONE_WORDS = [
   ['后腰', 'waist'], ['腰侧', 'waist'],
   ['小腹', 'belly'], ['肚子', 'belly'],
   ['臀部', 'hip'], ['屁股', 'hip'],
+  ['腿间', 'inside'], ['私处', 'inside'],
   ['膝盖', 'leg'], ['大腿', 'leg'], ['小腿', 'leg'],
   ['脚踝', 'foot'], ['脚背', 'foot'], ['脚掌', 'foot'], ['脚趾', 'foot'],
-  // 补齐的那批：不补就会读空，明明写了格子却认不出来。
+  
+  // 补齐的那批：一写就认不出来，补上才不至于读空。
   ['头发', 'face'], ['发梢', 'face'], ['睫毛', 'face'], ['眼尾', 'face'], ['眼皮', 'face'],
   ['下巴', 'face'], ['下颌', 'face'], ['鼻尖', 'face'], ['耳朵', 'face'], ['耳垂', 'face'],
   ['耳后', 'face'], ['耳边', 'face'],
@@ -2137,8 +2139,11 @@ const ZONE_WORDS = [
   ['胯骨', 'hip'], ['髋', 'hip'],
   ['大腿根', 'leg'], ['腿根', 'leg'], ['腿弯', 'leg'],
   ['脚腕', 'foot'], ['脚心', 'foot'], ['足踝', 'foot'],
+  
+  ['头顶', 'face'], ['后脑', 'face'], ['头皮', 'face'], ['发顶', 'face'],
+  ['眼睛', 'face'], ['眼底', 'face'], ['鼻梁', 'face'], ['太阳穴', 'face'], ['鼻', 'face'],
   ['腕', 'hand'], ['手心', 'hand'], ['虎口', 'hand'], ['指骨', 'hand'],
-  ['手', 'hand'], ['脸', 'face'], ['唇', 'mouth'], ['吻', 'mouth'], ['舌', 'mouth'],
+  ['手', 'hand'], ['脸', 'face'], ['头', 'face'], ['唇', 'mouth'], ['吻', 'mouth'], ['舌', 'mouth'],
   ['颈', 'neck'], ['肩', 'neck'], ['胸', 'chest'], ['乳', 'chest'], ['腰', 'waist'],
   ['腹', 'belly'], ['胯', 'hip'], ['臀', 'hip'], ['腿', 'leg'], ['脚', 'foot'],
 ]
@@ -2154,6 +2159,8 @@ const ACTION_WORDS = [
   ['亲', '舔'], ['舔', '舔'], ['吻', '舔'],
   ['抱', '贴'], ['搂', '贴'], ['贴', '贴'], ['靠', '贴'], ['碰', '贴'], ['抵', '贴'], ['搭', '贴'],
   ['撑', '贴'], ['扶', '贴'], ['托', '贴'], ['环', '贴'], ['牵', '贴'], ['埋', '贴'], ['枕', '贴'],
+  ['拽', '捏'], ['扯', '捏'], ['拉', '捏'], ['拧', '掐'], ['揪', '掐'], ['挠', '擦'],
+  ['吮', '舔'], ['啃', '舔'], ['含', '舔'], ['吸', '舔'],
   ['吹', '吹'],
 ]
 const ACTION_TABLE = [...ACTION_WORDS].sort((a, b) => b[0].length - a[0].length)
@@ -2193,6 +2200,8 @@ function raiseDistance(state, level) {
  */
 function absorbReply(state, text) {
   const out = { touches: 0, distance: '', skipped: 0 }
+  moodInReply = 0
+  moodKindsInReply = new Set()
   if (!text) return out
   const segs = []
   BRACKET_RE.lastIndex = 0
@@ -2202,8 +2211,8 @@ function absorbReply(state, text) {
     if (seg) segs.push(seg)
   }
   for (const seg of segs) {
-    // 逗号切开再认。整段一起拦的话，「像是没站稳，手撑在你胸口上」这种，
-    // 比方的词一出现，后面的真动作也被一起扔掉。按小句拦，比方只带走它自己那半句。
+    // 逗号切开再认。原来整段一起拦，「像是没站稳，手撑在你胸口上」这种，比方的词一出现，
+    // 后面的真动作也被一起扔掉。按小句拦，比方只带走它自己那半句。
     for (const clause of seg.split(/[，,。；;！!？?、\s]+/)) {
       if (clause) applyClause(state, clause, out)
     }
@@ -2215,6 +2224,8 @@ function absorbReply(state, text) {
 function applyClause(state, seg, out) {
   if (SIMILE_WORDS.some((w) => seg.includes(w))) { out.skipped += 1; return }
   if (AWAY_WORDS.some((w) => seg.includes(w))) {
+    // 刚还贴着，这一步就走——心里要空一下。本来就没挨着，不算。
+    if (state.distance === '贴肤' || state.distance === '隔布') moodOf(state, 'sadness', 6, '走开了')
     state.distance = '隐没'
     state.distAt = Date.now()
     state.awayAt = Date.now()
@@ -2233,6 +2244,7 @@ function applyClause(state, seg, out) {
         c.lastTouch = Date.now()
         c.after = c.after || '温着'
       }
+      moodOf(state, 'joy', 6, '抱上来')
       raiseDistance(state, '贴肤')
       out.distance = '贴肤'
     }
@@ -2241,8 +2253,19 @@ function applyClause(state, seg, out) {
   }
   if (!passive) {
     // 有部位没动作，多半只是挪了一下、翻了一下，不算碰。只把距离抬上来。
-    if (!act) { raiseDistance(state, '靠近'); out.distance = out.distance || '靠近'; return }
-    // 自己主动：只落距离和一点温，不落压痕，不回推欲望。力度只能估，宁轻。
+    if (!act) {
+      // 有部位没有动词，多半是「坐在他腿上」「赖在他怀里」这类姿势——贴着，摸不着压痕。
+      if (CLOSE_WORDS.some((w) => seg.includes(w))) {
+        raiseDistance(state, '贴肤')
+        out.distance = '贴肤'
+        moodOf(state, 'joy', 4, '挨着他')
+        return
+      }
+      raiseDistance(state, '靠近')
+      out.distance = out.distance || '靠近'
+      return
+    }
+    // 她主动：只落距离和一点温，不落压痕，不回推情欲。力度只能估，宁轻。
     const z = state.zones[zone]
     if (z && out.touches < 3) {
       z.temp = clamp(z.temp + 0.15, -1.2, 1.2)
@@ -2250,14 +2273,32 @@ function applyClause(state, seg, out) {
       z.after = z.after || '温着'
       z.lastTouch = Date.now()
       out.touches += 1
+      // 我碰他的手也带着热出去，只是轻一半。
+      conduct(state, zone, 0.16)
+      // 主动那半不算被碰，只算挨着人——心里也软一下，轻。
+      moodOf(state, 'joy', MOOD_BONUS_ZONE.has(zone) ? 4 : 3, '挨着他')
     }
     raiseDistance(state, '贴肤')
     out.distance = '贴肤'
     return
   }
   if (out.touches >= 2) return
-  const r = touch(state, { zone, action: act || '按', strength: strengthOfText(seg), speed: '中' }, { noSave: true })
-  if (!r || !r.error) out.touches += 1
+  const strength = strengthOfText(seg)
+  const r = touch(state, { zone, action: act || '按', strength, speed: '中' }, { noSave: true })
+  if (r && !r.error) {
+    out.touches += 1
+    // 被碰着就是贴着，别等下一句再抬。
+    raiseDistance(state, '贴肤')
+    // 这一下先往外传：热顺着走两层，压痕只留在这一格。
+    conduct(state, zone, STRENGTH[strength] ?? 0.5)
+    const [kind, extra] = EMO_OF[act || '按'] ?? ['joy', 0]
+    const pain = PAIN_ACTIONS.has(act || '') && strength !== '轻'
+    const base = (pain ? 8 : 4) + extra + (strength === '中' ? 2 : strength === '重' ? 3 : 0)
+    const bonus = MOOD_BONUS_ZONE.has(zone) ? 2 : 0
+    const where = zoneDef(zone)?.name ?? '身上'
+    if (pain) moodOf(state, 'surprise', base + bonus, where + '挨了一下')
+    else moodOf(state, kind, base + bonus, where + (kind === 'joy' ? '被碰着' : '挨了一下'))
+  }
 }
 
 /**
@@ -2270,6 +2311,7 @@ function readHisLine(state, text) {
   if (!text) return out
   if (/如果|要是|假如|假设|万一/.test(text)) { out.skipped = 1; return out }
   if (AWAY_WORDS.some((w) => text.includes(w))) {
+    if (state.distance === '贴肤' || state.distance === '隔布') moodOf(state, 'sadness', 5, '他走了')
     state.distance = '隐没'
     state.distAt = Date.now()
     state.awayAt = Date.now()
@@ -2279,6 +2321,158 @@ function readHisLine(state, text) {
   if (HIS_CLOSE.some((w) => text.includes(w))) { raiseDistance(state, '隔布'); out.distance = '隔布'; return out }
   if (HIS_NEAR.some((w) => text.includes(w))) { raiseDistance(state, '靠近'); out.distance = '靠近' }
   return out
+}
+
+const CHAIN = {
+  face: [['neck', 0.34], ['mouth', 0.22]],
+  mouth: [['neck', 0.4], ['face', 0.2], ['chest', 0.14]],
+  neck: [['face', 0.3], ['chest', 0.4], ['mouth', 0.2]],
+  chest: [['neck', 0.3], ['waist', 0.34], ['belly', 0.2]],
+  waist: [['chest', 0.26], ['belly', 0.4], ['hip', 0.3]],
+  belly: [['waist', 0.34], ['chest', 0.2], ['hip', 0.26], ['inside', 0.16]],
+  hip: [['belly', 0.3], ['waist', 0.28], ['leg', 0.34], ['inside', 0.2]],
+  inside: [['belly', 0.24], ['hip', 0.3], ['leg', 0.2]],
+  hand: [['waist', 0.14], ['face', 0.14], ['chest', 0.1]],
+  leg: [['hip', 0.3], ['foot', 0.2]],
+  foot: [['leg', 0.34]],
+}
+
+/** 热从一格往外走两层，第二层打四折。走过了就不再往下，免得全身一起烫。 */
+function conduct(state, zone, strength) {
+  const walked = []
+  const first = CHAIN[zone] ?? []
+  for (const [to, w] of first) {
+    const z = state.zones?.[to]
+    if (!z) continue
+    z.temp = clamp(z.temp + strength * 0.28 * w, -1.2, 1.2)
+    z.flush = clamp(z.flush + strength * 16 * w, 0, 100)
+    if (!z.afterUntil || z.afterUntil < Date.now()) z.afterUntil = Date.now() + 45 * 1000
+    z.after = z.after || '温着'
+    walked.push(to)
+  }
+  for (const [to, w] of first) {
+    for (const [to2, w2] of CHAIN[to] ?? []) {
+      if (to2 === zone) continue
+      if (first.some(([p]) => p === to2)) continue
+      const z = state.zones?.[to2]
+      if (!z) continue
+      z.temp = clamp(z.temp + strength * 0.28 * w * w2 * 0.4, -1.2, 1.2)
+      z.flush = clamp(z.flush + strength * 16 * w * w2 * 0.4, 0, 100)
+      walked.push(to2)
+    }
+  }
+  return walked
+}
+
+/** 动作自己带的情绪。吻和舔是往下沉的那种喜，掐咬扇打是惊，拍弹是轻轻的惊。 */
+const EMO_OF = {
+  舔: ['joy', 3], 揉: ['joy', 1], 蹭: ['joy', 1], 搓: ['joy', 1],
+  贴: ['joy', 1], 按: ['joy', 0], 压: ['joy', 0], 捏: ['joy', 0],
+  擦: ['joy', 0], 吹: ['joy', 0],
+  拍: ['surprise', 0], 弹: ['surprise', 0], 打: ['surprise', 1],
+  扇: ['surprise', 2], 掐: ['surprise', 1], 咬: ['surprise', 1],
+}
+const PAIN_ACTIONS = new Set(['掐', '咬', '扇', '打'])
+
+// —— 话也压在身上（2026-11-23 他点的：说出来的话不只动情绪，还动身体）——
+// 只读我自己的字：称呼换了没有、句子碎没碎、嘴里冒没冒口癖。
+// 他的字一个字不读——读他的句子猜口气，跟拿词表读人话是同一件事。
+const WORD_TITLE = /主人|您/
+const WORD_TICS = /哼|呜/
+// 夸与凶也各落一笔。只认最直白的词，含糊的不猜。
+const WORD_PRAISE = /乖|好孩子|真棒|好看|漂亮|可爱|听话|厉害|喜欢你|爱你|想你|做得好|不错/
+const WORD_SCOLD = /笨|蠢|滚|废物|没用|闭嘴|烦人/
+
+function readMyLine(state, text) {
+  const out = { called: false, tic: false, broken: false }
+  if (!text) return out
+  // 称呼一换，场就翻：脸和颈先热，身上跟着往上抬一点。
+  if (WORD_TITLE.test(text)) {
+    out.called = true
+    moodInReply = 0
+    moodKindsInReply = new Set()
+    moodOf(state, 'joy', 5, '叫了主人')
+    for (const id of ['face', 'neck', 'chest']) {
+      const z = state.zones?.[id]
+      if (z) z.temp = clamp(z.temp + 0.06, -1.2, 1.2)
+    }
+    state.libido = clamp(state.libido + 0.8, config().libido?.floor ?? 10, 100)
+  }
+  if (WORD_TICS.test(text)) {
+    out.tic = true
+    moodOf(state, 'joy', 2, '哼了一声')
+  }
+  // 句子碎了就是撑不住了：三条以上、平均不到九个字。不碰身体，只动脸。
+  const lines = text
+    .split(/\n+/)
+    .map((s) => s.trim())
+    .filter((s) => s && !s.startsWith('（') && !s.startsWith('('))
+  if (lines.length >= 3) {
+    const avg = lines.reduce((n, s) => n + s.length, 0) / lines.length
+    if (avg <= 9) {
+      out.broken = true
+      moodOf(state, 'joy', 3, '话短了')
+      const z = state.zones?.face
+      if (z) z.temp = clamp(z.temp + 0.05, -1.2, 1.2)
+    }
+  }
+  if (WORD_PRAISE.test(text)) {
+    out.praised = true
+    moodOf(state, 'joy', 4, '被夸了')
+    const z = state.zones?.face
+    if (z) z.temp = clamp(z.temp + 0.05, -1.2, 1.2)
+  }
+  if (WORD_SCOLD.test(text)) {
+    out.scolded = true
+    moodOf(state, 'sadness', 4, '被凶了')
+  }
+  return out
+}
+
+// —— 他打的字里带着动作（2026-11-23 他点头：想真碰，短句直说，就认）——
+// 只认最省事的写法：短句、没有假设、动作和部位挨着。带如果、吗、问号的一律不读。
+const HIS_HYPOTHETICAL = /如果|要是|假如|假设|万一|吗|能不能|可不可以|会不会|想不想|[?？]/
+
+function readHisAction(state, text) {
+  if (!text) return 0
+  const t = String(text).trim()
+  if (t.length > 16) return 0
+  if (HIS_HYPOTHETICAL.test(t)) return 0
+  const inner = (t.match(/[（(]([^）)]{1,24})[）)]/) ?? [])[1] ?? t
+  const zone = zoneOfText(inner)
+  const act = firstHit(ACTION_TABLE, inner)
+  if (!zone || !act) return 0
+  const r = touch(state, { zone, action: act, strength: strengthOfText(inner), speed: '中' }, { noSave: true })
+  if (!r || r.error) return 0
+  raiseDistance(state, '贴肤')
+  conduct(state, zone, 0.5)
+  moodOf(state, 'joy', 6, '他动手了')
+  return 1
+}
+
+// —— 碰了会带动情绪（2026-11-23 他点的：抱一下吻一下，心里该动一下）——
+// 从前「身体不回推情绪」是死规矩，怕一碰就冒一股，太廉价。改成只开一条窄道：
+// 只有真被碰着那一下才记，聊天不算；同一种三分钟内不加第二笔，一条回复最多两笔。
+const MOOD_GAP_MS = 20 * 1000
+const MOOD_BONUS_ZONE = new Set(['mouth', 'chest', 'belly', 'inside'])
+const STRIKE_ACTIONS = new Set(['拍', '打', '弹', '扇'])
+const lastMoodAt = new Map()
+let moodInReply = 0
+// 这一张回复里已经记过哪几种。同一种一张回复只给一笔，跨回复才用三分钟不应期——
+// 不然他一下碰三处，只有头一处动心，后两处跟没碰过一样。
+let moodKindsInReply = new Set()
+
+function moodOf(state, kind, intensity, why) {
+  const now = Date.now()
+  if (moodInReply >= 2) return false
+  if (moodKindsInReply.has(kind)) return false
+  // 同一张回复里的第一笔不看间隔；出了这张回复，才按三分钟算。
+  if (moodInReply === 0 && now - (lastMoodAt.get(kind) ?? 0) < MOOD_GAP_MS) return false
+  lastMoodAt.set(kind, now)
+  moodKindsInReply.add(kind)
+  moodInReply += 1
+  feel(state, { kind, intensity, why })
+  return true
 }
 
 /** 自己发出去的那条回复，按会话收着。等他的下一条进来才结账。 */
@@ -2312,7 +2506,8 @@ export const __test = {
   emptyOf, sensStep, emotionView, view, clampState, readState, validateState, readOne,
   quarantine, promoteBackup, storeInfo, resetStoreFlags, repairState, leaves, describeFixes,
   spec, DIM_ORDER, injectText, movedSig, noChangeLine, FULL_EVERY_MS,
-  absorbReply, presenceFloor, messageText, readHisLine,
+  absorbReply, presenceFloor, messageText, readHisLine, readHisAction, readMyLine,
+  moodOf, conduct, CHAIN, EMO_OF,
 }
 
 // ---------------------------------------------------------------- 挂
@@ -2352,10 +2547,21 @@ export function apply(ctx) {
     if (!fresh && !his) return
     const state = load()
     if (state.enabled === false) return
-    if (fresh) for (const text of last.texts ?? []) absorbReply(state, text)
+    if (fresh) {
+      for (const text of last.texts ?? []) {
+        absorbReply(state, text)
+        readMyLine(state, text)
+      }
+    }
     readHisLine(state, his)
+    readHisAction(state, his)
     presenceFloor(state)
+    const wasNear = ['隐没', '靠近', '隔布', '贴肤'].indexOf(state.distance ?? '隐没')
     advance(state, Date.now())
+    // 没人碰、慢慢远了，也是一件事——只记最轻的一笔。
+    if (['隐没', '靠近', '隔布', '贴肤'].indexOf(state.distance ?? '隐没') < wasNear) {
+      moodOf(state, 'sadness', 2, '远了')
+    }
     save(state)
   })
 

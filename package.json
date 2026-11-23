@@ -1,8 +1,8 @@
 {
   "name": "universal-body-clock",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "type": "module",
-  "description": "给 AI 装一副会走的身子：十格、八维、欲望、情绪、距离，还会读你正文里写的动作。",
+  "description": "给 AI 装一副会走的身子：十格、八维、欲望、情绪、距离，还读你正文里的动作，碰一处往外传一圈。",
   "exports": {
     ".": "./index.js",
     "./client": "./client.js",
