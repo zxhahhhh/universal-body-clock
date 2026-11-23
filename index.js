@@ -19,6 +19,7 @@
 import {
   readFileSync, writeFileSync, mkdirSync,
   renameSync, copyFileSync, existsSync, statSync,
+  openSync, closeSync, fsyncSync, readdirSync, unlinkSync,
 } from 'node:fs'
 import { homedir } from 'node:os'
 import { join, dirname } from 'node:path'
@@ -63,6 +64,12 @@ const EMO_ORDER = ['joy', 'anger', 'sadness', 'fear', 'surprise', 'disgust']
  * 照样只砍一次；间隔超过一天的部分不再补，因为压痕、红、余温本来就退干净了。
  */
 const MAX_ADVANCE_MS = 24 * 3600 * 1000
+
+/**
+ * 两个钟差过一分半，就当外面动过表（改时间、虚拟机暂停、休眠回来）。
+ * 只记一笔，不进账本：这是给人查的，不是身子的一部分，不占契约里的位置。
+ */
+const CLOCK_SKEW_MS = 90 * 1000
 
 const STRENGTH = { 轻: 0.35, 中: 0.65, 重: 1 }
 const SPEED = { 慢: 0.7, 中: 1, 快: 1.35 }
@@ -621,6 +628,12 @@ let lastRepairs = []
 /** 上一次写的时候修了几处。 */
 let lastSaveRepairs = []
 
+/**
+ * 上一次两钟对不上的记录（墙钟和单调时钟差超过 CLOCK_SKEW_MS 才有值）。
+ * 只活在内存里，不写进账本：出问题的时候能看出来「这次间隔是钟跳出来的、不是真过了那么久」。
+ */
+let lastClockSkew = null
+
 /** 坏文件不删，改名留档。出事能翻回来看它坏在哪。 */
 function quarantine(file) {
   const stamp = new Date().toISOString().replace(/[:.]/g, '-')
@@ -667,6 +680,8 @@ function readOne(file) {
  * 字段坏了不算「不行」：就地修回来，修完顺手写回去，磁盘上那份也就不脏了。
  */
 function readState() {
+  // 先扫一遍上次崩在半路的临时文件，免得越积越多。
+  sweepTmp()
   lastSource = 'main'
   lastProblems = []
   lastReadonly = false
@@ -721,16 +736,64 @@ function promoteBackup() {
 }
 
 /**
- * 原子换：先写同目录的临时文件再整份换上去，写到一半断电坏的是临时文件。
- * 通用版是单机单人用，不加锁——读、改、写都在一个进程里排队，不需要文件锁。
+ * 原子换：先写同目录的临时文件，落盘，再整份换上去。
+ *
+ * 三步都是有原因的老坑：
+ *   一、临时文件名带进程号和随机尾巴。固定叫 .tmp 的话，两个执行上下文同时写会互相截断，
+ *       一个把另一个正写了一半的文件改名上去，读出来就是半份 JSON。
+ *   二、写完先 fsync 再 rename。不落盘就改名，断电之后那个名字可能指向一个空文件——
+ *       名字换过去了，内容还在缓存里，这比没写更糟。
+ *   三、换完把目录也刷一下。文件进了目录项，目录项本身也得落盘，不然重启可能找不到这个文件。
+ *
+ * 通用版是单机单人用，不额外加文件锁——读、改、写都在一个进程里排队。
+ * 唯一临时名和 fsync 只解决「互相截断」和「断电换空」，不解决两个进程同时改同一份账、
+ * 各写各的、后写的盖掉先写的那个问题；丢更新得靠写前比 mtime 重读，不在这一版里。
  */
 function writeAtomic(state) {
   mkdirSync(STATE_DIR, { recursive: true })
   const body = JSON.stringify(state, null, 2)
-  const tmp = STATE_PATH + '.tmp'
-  writeFileSync(tmp, body, 'utf8')
-  promoteBackup()
-  renameSync(tmp, STATE_PATH)
+  const tmp = `${STATE_PATH}.tmp-${process.pid}-${Math.random().toString(36).slice(2, 8)}`
+  let fd = -1
+  try {
+    fd = openSync(tmp, 'w')
+    writeFileSync(fd, body, 'utf8')
+    fsyncSync(fd)
+    closeSync(fd)
+    fd = -1
+    promoteBackup()
+    renameSync(tmp, STATE_PATH)
+    // 目录项也落盘。有的文件系统不给开目录，开不了就算了，不影响账本本身。
+    try {
+      const dirFd = openSync(STATE_DIR, 'r')
+      try { fsyncSync(dirFd) } finally { closeSync(dirFd) }
+    } catch { /* 这个文件系统不支持对目录 fsync，跳过 */ }
+  } catch (err) {
+    if (fd >= 0) { try { closeSync(fd) } catch { /* 已经关掉了 */ } }
+    try { unlinkSync(tmp) } catch { /* 没写成，本来就不在 */ }
+    throw err
+  }
+}
+
+/**
+ * 扫掉上次崩在半路的临时文件。
+ * 只删一小时以前的、名字带 .tmp- 的——正在写的那一份可能才几十毫秒，别抢。
+ * 十分钟扫一次就够，读账本这条路上不值得每回都列目录。
+ */
+let lastSweep = 0
+function sweepTmp() {
+  const now = Date.now()
+  if (now - lastSweep < 10 * 60 * 1000) return
+  lastSweep = now
+  const base = STATE_PATH.split(/[\\/]/).pop() + '.tmp-'
+  let names = []
+  try { names = readdirSync(STATE_DIR) } catch { return }
+  for (const name of names) {
+    if (!name.startsWith(base)) continue
+    const file = `${STATE_DIR}/${name}`
+    try {
+      if (now - statSync(file).mtimeMs > 3600 * 1000) unlinkSync(file)
+    } catch { /* 别的进程刚删掉，正常 */ }
+  }
 }
 
 /**
@@ -775,6 +838,8 @@ function storeInfo() {
     repairs: lastRepairs.length,
     repaired: describeFixes(lastRepairs),
     saveRepairs: lastSaveRepairs.length,
+    // 上一次推进两钟差得离谱的那一笔（没有就是 null）。只给人查，不进账本。
+    clockSkew: lastClockSkew,
   }
 }
 
@@ -785,6 +850,7 @@ function resetStoreFlags() {
   lastReadonly = false
   lastRepairs = []
   lastSaveRepairs = []
+  lastClockSkew = null
 }
 
 // ---------------------------------------------------------------- 时钟
@@ -917,6 +983,12 @@ function advance(state, now) {
     : -1
   // 两头取大：墙钟被回拨时单调兜着，外面推假时间时墙钟兜着。
   let ms = (Number.isFinite(monoDelta) && monoDelta > wallMs) ? monoDelta : wallMs
+  // 两钟差得离谱，就把这次差异记下来（只进内存，不进账本）。
+  // 常见于改了系统时间、虚拟机暂停、笔记本休眠回来——那一刻算出来的间隔不可信，
+  // 有这条记录，事后才知道「那一大跳是钟跳出来的」，不用猜。
+  if (Number.isFinite(monoDelta) && monoDelta >= 0 && Math.abs(monoDelta - wallMs) > CLOCK_SKEW_MS) {
+    lastClockSkew = { at: now, wallMs, monoMs: monoDelta }
+  }
   if (!(ms > 0)) ms = 0
   if (ms > MAX_ADVANCE_MS) ms = MAX_ADVANCE_MS
   const dt = ms / 1000
