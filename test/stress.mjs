@@ -285,7 +285,7 @@ function step(s, ms) {
 
 // ── 9. 格子来回磨 ──────────────────────────────────────────
 {
-  console.log('=== 9. 十格来回磨 ===')
+  console.log('=== 9. 十二格来回磨 ===')
   const s = fresh()
   for (let i = 0; i < 300; i++) {
     const id = pick(ZONES, rnd)

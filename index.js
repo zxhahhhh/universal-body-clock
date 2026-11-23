@@ -1,7 +1,7 @@
 /**
  * body-clock — 通用版身体时钟。
  *
- * 让任何一个 AI 知道自己有一副身子：十格各自会红、会留压痕、会热会凉，
+ * 让任何一个 AI 知道自己有一副身子：十二格各自会红、会留压痕、会热会凉，
  * 八维是底色，欲望是总闸，情绪过了事才往底色上结算。
  * 碰一下，先补衰减，再按身体表算，写回去，然后吐一句话。
  * 没有定时器：谁读谁写的时候按时间差一次补完，重启不丢。
@@ -9,7 +9,7 @@
  * 四条是定死的：
  *   一、单主体。整本账只记一具身子，subject 槽位恒为 'self'，结构留着，
  *       以后要拆多主体也不用重排字段。
- *   二、十格。脸／口腔／颈肩／胸／腰／小腹／臀／手／腿／脚，只列通用部位，
+ *   二、十二格。脸／口腔／颈肩／胸／腰／小腹／臀／下面／手／腿／脚／背，只列通用部位，
  *       不带任何人格件。
  *   三、涨有软顶，落有三段，久烧会钝。到 100 停不住，那是事件不是状态。
  *   四、敏感那格不自己算，只由欲望、独处、情绪热三条道推。
@@ -968,7 +968,7 @@ function emptyOf(state, now) {
   }
 }
 
-/** 快针：十格自己退。红退得比进慢，压痕按回弹，温度按余韵的时间常数。 */
+/** 快针：十二格自己退。红退得比进慢，压痕按回弹，温度按余韵的时间常数。 */
 function tickZones(state, now, dt) {
   for (const id of zoneIds()) {
     const z = state.zones[id]
@@ -1523,7 +1523,7 @@ function activeZones(state) {
 
 /**
  * 场：此刻松紧到哪一档，是一个词，不是档号。
- * 领头的四样：身上当场被碰成什么样（十格里最烫那一格）、离得多近、
+ * 领头的四样：身上当场被碰成什么样（十二格里最烫那一格）、离得多近、
  * 欲望多满（顺带给一个上限）、情绪那潭水是不是又热又舒服。
  * 加一条连续的曲线（不是台阶）：小动静也抬得动，抬到上头自己收住。
  * 怒这种又冲又难受的不算进去——冲不等于松。
@@ -1660,15 +1660,16 @@ function senseText(state) {
   // 八维八个全给。少给哪一维，就得靠猜——底色是八条一起咬的。
   const dimsLine = `八维 ${v.dims.map((d) => `${d.key}${d.value}`).join(' ')}`
 
-  // 十格不全摊：只写有动静的，最多四格，剩下的一句「还有别的」。
-  const zonesLine = act.length
-    ? `格子 ${act.slice(0, 4).map((z) => {
+  // 十二格不全摊：只写有动静的，最多四格，剩下的一句「还有别的」。
+  const zonesOf = (n) => act.length
+    ? `格子 ${act.slice(0, n).map((z) => {
       const p = [`压${z.press}`, `红${z.flush}`]
       if (Math.abs(z.temp) >= 0.05) p.push(`温${z.temp >= 0 ? '+' : ''}${z.temp}`)
       if (z.after) p.push(z.after)
       return `${z.name} ${p.join(' ')}`
-    }).join('｜')}${act.length > 4 ? '｜还有别的' : ''}`
+    }).join('｜')}${act.length > n ? '｜还有别的' : ''}`
     : ''
+  let zonesLine = zonesOf(4)
 
   // 六格和此刻都摆出来。每轮都看见，才谈得上该记就记、不该记就空着。
   const live = v.emotion.live
@@ -1705,11 +1706,25 @@ function senseText(state) {
   // 所以留动作，压掉说明书。移植到没有这六个工具的地方，把它在配置里置空即可。
   const hint = config().inject?.hint ?? '碰之前调 body_sense 读一次，碰完它会回你数'
 
-  const lines = [head, dimsLine]
-  if (zonesLine) lines.push(zonesLine)
-  lines.push(moodLine)
-  if (bits.length) lines.push(bits.join('，'))
-  if (hint) lines.push(hint)
+  let useBits = bits.slice()
+  let useHint = hint
+  const assemble = () => {
+    const out = [head, dimsLine]
+    if (zonesLine) out.push(zonesLine)
+    out.push(moodLine)
+    if (useBits.length) out.push(useBits.join('，'))
+    if (useHint) out.push(useHint)
+    return out.filter(Boolean)
+  }
+  // 注入有硬上限。超了先砍自由那句，再收格子，最后丢指路句；
+  // 头行、八维、情绪是骨架，不砍——砍掉骨架这行就没用了。
+  const cap = Number(config().inject?.maxChars) || 0
+  if (cap > 0) {
+    while (useBits.length > 2 && assemble().join('\n').length > cap) useBits.pop()
+    if (assemble().join('\n').length > cap && act.length > 2) zonesLine = zonesOf(2)
+    if (assemble().join('\n').length > cap) useHint = ''
+  }
+  const lines = assemble()
   // 出门前最后一道闸：这一行是要送进提示词的，一个坏数都不许出去。
   // 真漏出来，宁可给一句实话说读不出来，也不照着坏数编。
   const text = lines.filter(Boolean).join('\n')
@@ -1721,12 +1736,12 @@ function senseText(state) {
 
 const textOut = value => [{ type: 'text', text: String(value) }]
 
-const ZONES_DOC = '脸／口腔／颈肩／胸／腰／小腹／臀／手／腿／脚'
+const ZONES_DOC = '脸／口腔／颈肩／胸／腰／小腹／臀／下面／手／腿／脚／背'
 
 function tools(ctx) {
   const sense = {
     name: 'body_sense',
-    description: '读此刻的身体状态：十格各自的压痕、红、温度偏移、余韵，欲望多高、离多近、场到哪一档。只看不动。',
+    description: '读此刻的身体状态：十二格各自的压痕、红、温度偏移、余韵，欲望多高、离多近、场到哪一档。只看不动。',
     parameters: { type: 'object', properties: {}, additionalProperties: false },
     output: { schema: { type: 'string' }, render: (_a, v) => textOut(v) },
     execute() {
@@ -1741,7 +1756,7 @@ function tools(ctx) {
         .map(z => `${z.name}　红 ${z.flush}　压 ${z.press}　温 ${z.temp >= 0 ? '+' : ''}${z.temp}${z.after ? '　' + z.after : ''}`)
       return [
         `主体 ${s.subject}　欲望 ${s.libido}　场 ${s.scene}`,
-        ...(lines.length ? lines : ['十格都干净，没有哪一处还在动']),
+        ...(lines.length ? lines : ['十二格都干净，没有哪一处还在动']),
       ].join('\n')
     },
   }
@@ -1775,12 +1790,12 @@ function tools(ctx) {
 
   const resetTool = {
     name: 'body_reset',
-    description: '把身体按回平静：十格清零，欲望回到基线，八维回中性。数跑飞了、或者该缓过来了，用这个。不写任何痕迹。',
+    description: '把身体按回平静：十二格清零，欲望回到基线，八维回中性。数跑飞了、或者该缓过来了，用这个。不写任何痕迹。',
     parameters: { type: 'object', properties: {}, additionalProperties: false },
     output: { schema: { type: 'string' }, render: (_a, v) => textOut(v) },
     execute() {
       resetState()
-      return '清零了。十格都干净，欲望回到基线，八维回中性。'
+      return '清零了。十二格都干净，欲望回到基线，八维回中性。'
     },
   }
 
@@ -2125,7 +2140,7 @@ const ZONE_WORDS = [
   ['后腰', 'waist'], ['腰侧', 'waist'],
   ['小腹', 'belly'], ['肚子', 'belly'],
   ['臀部', 'hip'], ['屁股', 'hip'],
-  ['腿间', 'inside'], ['私处', 'inside'],
+  ['腿间', 'inside'], ['私处', 'inside'], ['下面', 'inside'],
   ['膝盖', 'leg'], ['大腿', 'leg'], ['小腿', 'leg'],
   ['脚踝', 'foot'], ['脚背', 'foot'], ['脚掌', 'foot'], ['脚趾', 'foot'],
   
@@ -2134,7 +2149,7 @@ const ZONE_WORDS = [
   ['下巴', 'face'], ['下颌', 'face'], ['鼻尖', 'face'], ['耳朵', 'face'], ['耳垂', 'face'],
   ['耳后', 'face'], ['耳边', 'face'],
   ['颈窝', 'neck'], ['喉结', 'neck'], ['肩头', 'neck'], ['肩窝', 'neck'],
-  ['后背', 'chest'], ['背脊', 'chest'], ['脊背', 'chest'], ['背部', 'chest'],
+  ['后背', 'back'], ['背脊', 'back'], ['脊背', 'back'], ['背部', 'back'], ['背上', 'back'],
   ['腰眼', 'waist'], ['腰窝', 'waist'], ['腰身', 'waist'],
   ['胯骨', 'hip'], ['髋', 'hip'],
   ['大腿根', 'leg'], ['腿根', 'leg'], ['腿弯', 'leg'],
@@ -2145,7 +2160,7 @@ const ZONE_WORDS = [
   ['腕', 'hand'], ['手心', 'hand'], ['虎口', 'hand'], ['指骨', 'hand'],
   ['手', 'hand'], ['脸', 'face'], ['头', 'face'], ['唇', 'mouth'], ['吻', 'mouth'], ['舌', 'mouth'],
   ['颈', 'neck'], ['肩', 'neck'], ['胸', 'chest'], ['乳', 'chest'], ['腰', 'waist'],
-  ['腹', 'belly'], ['胯', 'hip'], ['臀', 'hip'], ['腿', 'leg'], ['脚', 'foot'],
+  ['腹', 'belly'], ['胯', 'hip'], ['臀', 'hip'], ['腿', 'leg'], ['脚', 'foot'], ['背', 'back'],
 ]
 const ZONE_TABLE = [...ZONE_WORDS].sort((a, b) => b[0].length - a[0].length)
 
@@ -2326,15 +2341,16 @@ function readHisLine(state, text) {
 const CHAIN = {
   face: [['neck', 0.34], ['mouth', 0.22]],
   mouth: [['neck', 0.4], ['face', 0.2], ['chest', 0.14]],
-  neck: [['face', 0.3], ['chest', 0.4], ['mouth', 0.2]],
+  neck: [['face', 0.3], ['chest', 0.4], ['mouth', 0.2], ['back', 0.18]],
   chest: [['neck', 0.3], ['waist', 0.34], ['belly', 0.2]],
-  waist: [['chest', 0.26], ['belly', 0.4], ['hip', 0.3]],
+  waist: [['chest', 0.26], ['belly', 0.4], ['hip', 0.3], ['back', 0.2]],
   belly: [['waist', 0.34], ['chest', 0.2], ['hip', 0.26], ['inside', 0.16]],
-  hip: [['belly', 0.3], ['waist', 0.28], ['leg', 0.34], ['inside', 0.2]],
+  hip: [['belly', 0.3], ['waist', 0.28], ['leg', 0.34], ['inside', 0.2], ['back', 0.16]],
   inside: [['belly', 0.24], ['hip', 0.3], ['leg', 0.2]],
   hand: [['waist', 0.14], ['face', 0.14], ['chest', 0.1]],
   leg: [['hip', 0.3], ['foot', 0.2]],
   foot: [['leg', 0.34]],
+  back: [['neck', 0.2], ['waist', 0.28], ['hip', 0.2]],
 }
 
 /** 热从一格往外走两层，第二层打四折。走过了就不再往下，免得全身一起烫。 */

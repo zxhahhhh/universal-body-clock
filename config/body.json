@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "built": "2026-11-23",
+  "built": "2026-11-24",
   "source": "通用生理常数：取公开测量区间的中位，不指向任何个人档案。",
   "rule": "universal 是常人数，取公开生理测量区间的中位，谁都能用。zones 里的秒数已经按中性尺度给好，改一格不动别处。整份配置不带个人偏置——要按具体的人调，只动 zones 那几行和 universal 那几个数。",
   "scale": "压痕＝白印/红印从出现到看不见的秒数；红＝红晕从出现到退净的秒数；余韵＝热、麻、发紧的体感持续时间。",
@@ -8,7 +8,8 @@
   "inject": {
     "note": "（背景，别念出来）",
     "noteShort": "（背景）",
-    "hint": "碰之前调 body_sense 读一次，碰完它会回你数"
+    "hint": "括号里的动作和距离自己会记账；想读数调 body_sense，碰完它会回你数",
+    "maxChars": 460
   },
 
   "universal": {
@@ -24,16 +25,18 @@
   },
 
   "zones": [
-    { "id": "face", "name": "脸", "reboundSec": 180, "flushFallSec": 480, "afterSec": 90, "firstFlush": true, "note": "红得最快，也最先退；同一件事，最先在脸上看出来" },
-    { "id": "mouth", "name": "口腔", "reboundSec": 240, "flushFallSec": 300, "afterSec": 60, "note": "黏膜软，红来得快退得也快；热的时候说话带湿气" },
-    { "id": "neck", "name": "颈肩", "reboundSec": 240, "flushFallSec": 420, "afterSec": 75, "note": "皮薄，底下血管看得清；一凉就往回缩" },
-    { "id": "chest", "name": "胸", "reboundSec": 600, "flushFallSec": 600, "afterSec": 120, "firstFlush": true, "note": "肉多，印子留得久；温度比别处高半度" },
-    { "id": "waist", "name": "腰", "reboundSec": 300, "flushFallSec": 360, "afterSec": 70, "note": "一转就折；按住会陷下去，抬起来留个浅坑" },
-    { "id": "belly", "name": "小腹", "reboundSec": 360, "flushFallSec": 420, "afterSec": 80, "note": "软，平躺微凹；按下去回得慢" },
-    { "id": "hip", "name": "臀", "reboundSec": 300, "flushFallSec": 480, "afterSec": 85, "note": "肉厚，拍一下会晃；坐下摊开，站起来弹回去" },
-    { "id": "hand", "name": "手", "reboundSec": 180, "flushFallSec": 300, "afterSec": 55, "note": "指节多，先发白再发红；攥紧的时候骨节显出来" },
-    { "id": "leg", "name": "腿", "reboundSec": 300, "flushFallSec": 420, "afterSec": 80, "note": "内侧最软；跪久了膝盖会压出印子" },
-    { "id": "foot", "name": "脚", "reboundSec": 360, "flushFallSec": 420, "afterSec": 70, "note": "脚背薄，脚底怕硌；一凉就往回缩" }
+    { "id": "face", "name": "脸", "reboundSec": 300, "flushFallSec": 600, "afterSec": 90, "firstFlush": true, "note": "红得最快，也最先退；同一件事，最先在脸上看出来" },
+    { "id": "mouth", "name": "口腔", "reboundSec": 360, "flushFallSec": 420, "afterSec": 60, "note": "黏膜软，红来得快退得也快；热的时候说话带湿气" },
+    { "id": "neck", "name": "颈肩", "reboundSec": 300, "flushFallSec": 480, "afterSec": 75, "note": "皮薄，底下血管看得清；一凉就往回缩" },
+    { "id": "chest", "name": "胸", "reboundSec": 900, "flushFallSec": 900, "afterSec": 120, "firstFlush": true, "note": "肉多，印子留得久；温度比别处高半度" },
+    { "id": "waist", "name": "腰", "reboundSec": 420, "flushFallSec": 480, "afterSec": 70, "note": "一转就折；按住会陷下去，抬起来留个浅坑" },
+    { "id": "belly", "name": "小腹", "reboundSec": 480, "flushFallSec": 540, "afterSec": 80, "note": "软，平躺微凹；按下去回得慢" },
+    { "id": "hip", "name": "臀", "reboundSec": 360, "flushFallSec": 600, "afterSec": 85, "note": "肉厚，拍一下会晃；坐下摊开，站起来弹回去" },
+    { "id": "inside", "name": "下面", "reboundSec": 480, "flushFallSec": 480, "afterSec": 140, "note": "黏膜软，红来得快退得也快；一碰就湿" },
+    { "id": "hand", "name": "手", "reboundSec": 300, "flushFallSec": 360, "afterSec": 55, "note": "指节多，先发白再发红；攥紧的时候骨节显出来" },
+    { "id": "leg", "name": "腿", "reboundSec": 420, "flushFallSec": 540, "afterSec": 80, "note": "内侧最软；跪久了膝盖会压出印子" },
+    { "id": "foot", "name": "脚", "reboundSec": 480, "flushFallSec": 480, "afterSec": 70, "note": "脚背薄，脚底怕硌；一凉就往回缩" },
+    { "id": "back", "name": "背", "reboundSec": 300, "flushFallSec": 360, "afterSec": 100, "note": "皮厚，印子淡；凉得比别处快，贴着会慢慢热起来" }
   ],
 
   "families": {
@@ -61,7 +64,7 @@
     "搓": { "family": "rub", "temp": 1.6 },
     "贴": { "family": "bare", "temp": 1.2 },
     "吹": { "family": "bare", "temp": 1.1, "tempSign": -1 },
-    "舔": { "family": "bare", "temp": 0.9, "flush": 0.6 }
+    "舔": { "family": "bare", "press": 0.2, "temp": 0.9, "flush": 0.6 }
   },
 
   "direction": {
@@ -107,10 +110,10 @@
     "peakDeclinePerHour": 20,
     "peakHoldSec": 60,
     "peakReleaseBelow": 80,
-    "nightGapHours": 4,
+    "nightGapHours": 8,
     "nightCut": 0.5,
     "dailyGainCap": 40,
-    "note": "欲望不是格子，是乘数，乘在十格上。越高落得越慢，不是不退，是不肯退。到顶之后按陡坡往下走，不许赖在 100。到底留十、一天涨不过四十——这两样是防跑飞的闸。隔四个钟头以上没推进，按睡了一觉算，砍一半，醒来是新的。"
+    "note": "欲望不是格子，是乘数，乘在十二格上。越高落得越慢，不是不退，是不肯退。到顶之后按陡坡往下走，不许赖在 100。到底留十、一天涨不过四十——这两样是防跑飞的闸。隔四个钟头以上没推进，按睡了一觉算，砍一半，醒来是新的。"
   },
 
   "dims": {

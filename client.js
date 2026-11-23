@@ -431,7 +431,7 @@ window.__ModuleLoader__.load({
         h('button', {
           key: 'z', type: 'button', style: btn(tab === 'zones'),
           onClick: function () { setTab('zones'); },
-        }, '十格'),
+        }, '十二格'),
       ]);
 
       const foot = h('div', {
