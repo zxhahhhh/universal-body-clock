@@ -1,0 +1,156 @@
+{
+  "schema": 1,
+  "built": "2026-11-23",
+  "source": "通用生理常数：取公开测量区间的中位，不指向任何个人档案。",
+  "rule": "universal 是常人数，取公开生理测量区间的中位，谁都能用。zones 里的秒数已经按中性尺度给好，改一格不动别处。整份配置不带个人偏置——要按具体的人调，只动 zones 那几行和 universal 那几个数。",
+  "scale": "压痕＝白印/红印从出现到看不见的秒数；红＝红晕从出现到退净的秒数；余韵＝热、麻、发紧的体感持续时间。",
+
+  "inject": {
+    "note": "（背景，别念出来）",
+    "noteShort": "（背景）",
+    "hint": "碰之前调 body_sense 读一次，碰完它会回你数"
+  },
+
+  "universal": {
+    "tempBase": 37.0,
+    "pressReboundSec": 15,
+    "flushRiseSec": 2.5,
+    "flushFallSec": 90,
+    "sweatOnsetSec": 150,
+    "sweatDrySec": 420,
+    "sensitiveRecoverSec": 240,
+    "sensitiveGain": 1.2,
+    "afterSec": 60
+  },
+
+  "zones": [
+    { "id": "face", "name": "脸", "reboundSec": 180, "flushFallSec": 480, "afterSec": 90, "firstFlush": true, "note": "红得最快，也最先退；同一件事，最先在脸上看出来" },
+    { "id": "mouth", "name": "口腔", "reboundSec": 240, "flushFallSec": 300, "afterSec": 60, "note": "黏膜软，红来得快退得也快；热的时候说话带湿气" },
+    { "id": "neck", "name": "颈肩", "reboundSec": 240, "flushFallSec": 420, "afterSec": 75, "note": "皮薄，底下血管看得清；一凉就往回缩" },
+    { "id": "chest", "name": "胸", "reboundSec": 600, "flushFallSec": 600, "afterSec": 120, "firstFlush": true, "note": "肉多，印子留得久；温度比别处高半度" },
+    { "id": "waist", "name": "腰", "reboundSec": 300, "flushFallSec": 360, "afterSec": 70, "note": "一转就折；按住会陷下去，抬起来留个浅坑" },
+    { "id": "belly", "name": "小腹", "reboundSec": 360, "flushFallSec": 420, "afterSec": 80, "note": "软，平躺微凹；按下去回得慢" },
+    { "id": "hip", "name": "臀", "reboundSec": 300, "flushFallSec": 480, "afterSec": 85, "note": "肉厚，拍一下会晃；坐下摊开，站起来弹回去" },
+    { "id": "hand", "name": "手", "reboundSec": 180, "flushFallSec": 300, "afterSec": 55, "note": "指节多，先发白再发红；攥紧的时候骨节显出来" },
+    { "id": "leg", "name": "腿", "reboundSec": 300, "flushFallSec": 420, "afterSec": 80, "note": "内侧最软；跪久了膝盖会压出印子" },
+    { "id": "foot", "name": "脚", "reboundSec": 360, "flushFallSec": 420, "afterSec": 70, "note": "脚背薄，脚底怕硌；一凉就往回缩" }
+  ],
+
+  "families": {
+    "note": "四族是接触的几何，不是动作清单。压和红不是一个东西：压是陷下去多少，看接触面多大、压了多久；红是血往那儿涌，看有没有蹭、有没有疼。同一个重，按下去和拍下去，压差一半，红反过来差一倍。系数以中力、中速、按一下为 1.0。spread 是红散多开，散得开的退得慢，红的退净秒数乘 0.7+spread。aftershockSec 是余震，击族打完那块皮会一跳一跳。",
+    "press":  { "name": "静压", "press": 1.0,  "flush": 0.75, "spread": 0.35, "temp": 0.6, "aftershockSec": 0 },
+    "strike": { "name": "击",   "press": 0.35, "flush": 1.4,  "spread": 0.85, "temp": 0.8, "aftershockSec": 90 },
+    "rub":    { "name": "摩",   "press": 0.08, "flush": 0.9,  "spread": 0.6,  "temp": 1.5, "aftershockSec": 0 },
+    "bare":   { "name": "无压", "press": 0.0,  "flush": 0.2,  "spread": 0.4,  "temp": 1.0, "aftershockSec": 0 }
+  },
+
+  "actions": {
+    "note": "动作表只存归哪族，不存数字。以后新动作往这四族里归，不用改代码。表里的 press/flush/temp 是同族内的微调，乘在族系数上。tempSign 为负是往里吸凉。",
+    "按": { "family": "press" },
+    "压": { "family": "press" },
+    "捏": { "family": "press" },
+    "掐": { "family": "press", "press": 1.15 },
+    "咬": { "family": "press", "press": 1.25, "flush": 1.1 },
+    "拍": { "family": "strike" },
+    "打": { "family": "strike", "press": 1.2 },
+    "弹": { "family": "strike", "press": 0.7 },
+    "扇": { "family": "strike", "flush": 1.3 },
+    "揉": { "family": "rub" },
+    "擦": { "family": "rub", "temp": 1.2 },
+    "蹭": { "family": "rub", "temp": 1.2 },
+    "搓": { "family": "rub", "temp": 1.6 },
+    "贴": { "family": "bare", "temp": 1.2 },
+    "吹": { "family": "bare", "temp": 1.1, "tempSign": -1 },
+    "舔": { "family": "bare", "temp": 0.9, "flush": 0.6 }
+  },
+
+  "direction": {
+    "note": "方向不进族。压一样，反应不一样，只改怎么写，不改数。不给就是没方向。",
+    "list": ["上", "下", "左", "右", "里", "外", "顺", "逆"],
+    "hint": {
+      "下": "往肉里沉，陷下去，抬起来还留着坑",
+      "上": "被往上拎，皮跟着走，根上绷起来",
+      "左": "往一边推，肉散开，回得慢",
+      "右": "往一边推，肉散开，回得慢",
+      "里": "往里按，越往里越紧，外头看着不显",
+      "外": "往外拽，皮被拉薄，揪起来一块",
+      "顺": "顺着走，贴得住，不扎人",
+      "逆": "逆着蹭，皮下起一层小疙瘩"
+    }
+  },
+
+  "emotion": {
+    "note": "六种是色不是格。同一刻最多两笔，一笔主事件加三个数。强度的衰减比事件慢，事件退了三个数还在，那就是余味。",
+    "kinds": ["joy", "anger", "sadness", "fear", "surprise", "disgust"],
+    "labels": { "joy": "喜", "anger": "怒", "sadness": "哀", "fear": "惧", "surprise": "惊", "disgust": "厌" },
+    "maxConcurrent": 2,
+    "refractoryHours": 0.5,
+    "threshold": 45,
+    "debtFallPerDay": 4,
+    "debtCap": 100,
+    "sensWeight": 0.4,
+    "decay": { "eventSec": 900, "axisSec": 5400, "intensitySec": 900, "kindSec": 1500 },
+    "axes": {
+      "valence": { "label": "愉悦", "min": -1, "max": 1 },
+      "arousal": { "label": "唤醒", "min": 0, "max": 100 },
+      "control": { "label": "控制", "min": -1, "max": 1 }
+    }
+  },
+
+  "libido": {
+    "baseline": 12,
+    "floor": 10,
+    "driftPerHour": 0.5,
+    "seasonDays": [18, 19, 20, 21],
+    "seasonMult": 2,
+    "fallPerHour": { "under60": 3.2, "60to85": 2.0, "over85": 1.2 },
+    "peakDeclinePerHour": 20,
+    "peakHoldSec": 60,
+    "peakReleaseBelow": 80,
+    "dailyGainCap": 40,
+    "note": "欲望不是格子，是乘数，乘在十格上。越高落得越慢，不是不退，是不肯退。到顶之后按陡坡往下走，不许赖在 100。到底留十、一天涨不过四十——这两样是防跑飞的闸；不推进它自己会落下去，所以没有睡一觉那道闸。"
+  },
+
+  "dims": {
+    "note": "八维是底色不是皮肤。写入口只有一个，一次最多动三处，动多了就假。只在这几件事上动：欲望过线、一整件事过去了、人走开、久没人碰。",
+    "maxPerCall": 3,
+    "pushAdd": 3,
+    "libidoPush": {
+      "note": "欲望过线推敏感。不是一步到位，按档走：越往上推得越快，快到顶就有顶，不许推到一百。欲望落回去，敏感自己慢慢退回来——不留一个下不去的数。",
+      "line": 60,
+      "bands": [[60, 0.6], [80, 1.2], [90, 2.0]],
+      "cap": 95,
+      "fallPerHour": 0.15,
+      "tidePerHour": 0.4
+    },
+    "settle": {
+      "note": "一整件事过去之后再加减，不是当场。量按强度折算，重的那笔乘一点五。",
+      "mult": 2.5,
+      "heavyMul": 1.5,
+      "heavyAbove": 70,
+      "map": {
+        "joy":       { "亲密": 1, "羞": -0.6 },
+        "anger":     { "放松": -1, "信任": -0.5 },
+        "sadness":   { "亲密": 0.8, "敏感": 1, "放松": -0.6 },
+        "fear":      { "敏感": 1, "警觉": 0.9 },
+        "surprise":  { "羞": -0.4, "警觉": 0.3 },
+        "disgust":   { "信任": -0.8, "亲密": -0.4 }
+      }
+    }
+  },
+
+  "empty": {
+    "note": "欲望咬三头里「空」那一半：过六十线，没人碰也难受，不是等来的，是自己热上来。人走开写空落，不是平常那样慢慢落；走开最多挂十二小时（awayMaxHours），超了就当人已经不在，不再按空落往下扣。",
+    "line": 60,
+    "idleMin": 20,
+    "fallMult": 0.5,
+    "awayFallMult": 0.35,
+    "awayMaxHours": 12,
+    "zones": ["belly", "waist", "chest", "neck"],
+    "tempPerHour": 0.35,
+    "flushPerHour": 6,
+    "tempCap": 0.8,
+    "flushCap": 55,
+    "dimPerHour": { "敏感": 0.6, "羞": -0.3 }
+  }
+}

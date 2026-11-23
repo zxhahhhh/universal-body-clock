@@ -1,0 +1,36 @@
+{
+  "name": "universal-body-clock",
+  "version": "1.1.0",
+  "type": "module",
+  "description": "给 AI 装一副会走的身子：十格、八维、欲望、情绪、距离，还会读你正文里写的动作。",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE",
+    "index.js",
+    "client.js",
+    "config",
+    "locale",
+    "icon.svg",
+    "docs",
+    "cordis.patch.yml"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-conversation"
+      ]
+    }
+  }
+}
