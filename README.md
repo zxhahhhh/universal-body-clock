@@ -103,7 +103,7 @@
 
 - 某格消退还快／还慢：改 `zones` 里那行的 `reboundSec`（压痕）、`flushFallSec`（红）、`afterSec`（余韵）。
 - 整体手感：改 `universal` 那组常人数，格子没写秒数时拿它兜底。
-- 欲望涨落：`libido` 里的 `driftPerHour`、`fallPerHour`、`dailyGainCap` 是一组防跑飞的闸，改一样就够。
+- 欲望涨落：`libido` 里的 `driftPerHour`、`fallPerHour`、`dailyGainCap`、`nightCut` 是一组防跑飞的闸，改一样就够。`nightGapHours`（默认四）决定隔多久算「睡了一觉」，`nightCut`（默认 0.5）是那一觉砍掉的比例。
 - 走开最多挂多久：`empty.awayMaxHours`，默认十二小时，超了就当人已经不在，不再按空落慢扣。
 - 欲望推敏感：`dims.libidoPush` 的 `line`、`bands`、`cap`。
 - 一次能动几维：`dims.maxPerCall`（不写＝3，`null` 或 `0` ＝不限）。

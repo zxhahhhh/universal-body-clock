@@ -1,4 +1,4 @@
-// 两道闸的实测：一天涨不过四十、到底留十；还有欲望给的上限。
+// 三道闸的实测：一天涨不过四十、到底留十、睡一觉砍一半；还有欲望给的上限。
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -10,12 +10,12 @@ const { load, blankState, advance, desireCap } = __test
 const H = 3600 * 1000
 const pad = (s) => String(Math.round(s * 10) / 10)
 
-// 1. 不推进：离开 12 小时，没人碰也没说话，自己往下落（v1.1 起没有「睡一觉砍一半」那道闸）。
+// 1. 夜切：隔 12 小时没推进，按睡了一觉算，砍一半。
 const s1 = load()
 s1.libido = 90
 s1.at = Date.now() - 12 * H
 advance(s1, Date.now())
-console.log(`不推进 90 / 12h → ${pad(s1.libido)}（自己落，不再一刀砍半）`)
+console.log(`夜切 90 / 12h → ${pad(s1.libido)}（应 45）`)
 
 // 2. 日涨上限：今天只剩 1 点额度，漂 2 小时也只涨 1 点。
 const s2 = load()

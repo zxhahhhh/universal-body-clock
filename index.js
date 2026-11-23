@@ -1005,11 +1005,13 @@ function tickLibido(state, now, hours, env) {
   const floor = L.floor ?? 10
   const EMP = config().empty ?? {}
 
-  // 原先这里有一道「隔四小时算睡了一觉、砍一半」的闸。删了——
-  // 它看不出人到底睡没睡，只能按间隔猜；白天上一节课隔开四小时，
-  // 也照样按睡了一觉算，砍掉的都是醒着的账。真要落，下面三档回落
-  // 本来就比漂移快，静着不管自己会落到地板，那道闸在数上是多余的。
-  // 「回来一次涨多少」由 gainToday 的日期重置管，见下。
+  // 闸一：睡了一觉砍一半。隔得够久就不按小时慢慢算，按一觉算。
+  if (hours >= (L.nightGapHours ?? 4)) {
+    state.libido = clamp(state.libido * (L.nightCut ?? 0.5), floor, 100)
+    state.peakAt = 0
+    state.gainToday = 0
+    return
+  }
 
   const day = new Date(now).getDate()
   const season = (L.seasonDays ?? [18, 19, 20, 21]).includes(day)
