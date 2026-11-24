@@ -34,7 +34,7 @@ const STATE_PATH = process.env.BODY_CLOCK_STATE || join(STATE_DIR, 'body-clock.j
 const API_PATH = '/api/body-clock'
 const BAK_PATH = STATE_PATH + '.bak'
 /** 状态文件版本。通用版是第 2 版；改字段结构就加一，迁移只往前。 */
-const SCHEMA = 2
+const SCHEMA = 3
 /** 万一拼出来的那几行里有坏值，就换这一句。宁可说实话，也不照着坏数编。 */
 const SAFE_LINE = '[身体] 这一格读不出来，账本可能坏了。调 body_sense 看一眼。'
 
@@ -92,6 +92,18 @@ const DIRECTION = ['上', '下', '左', '右', '里', '外', '顺', '逆']
  * 不进账本：它活三分钟，重启丢了也不亏，还不用动契约。
  */
 const emoMarks = new Map()
+
+/**
+ * 话落到身上的那一点：三分钟内他那句话是往哪儿落的。
+ * 只存内存、只给注入用一句，不落账、不抬欲望——那句话已经按情绪记过了，
+ * 这一层只是让「小腹先热了一下」这类反应有个来处，不是再记一笔。
+ */
+const speechMark = { at: 0, kind: '' }
+const SPEECH_BITS = {
+  order: '他一句话，小腹先热了一下',
+  threat: '那句还在手上凉着',
+  memory: '他提了件旧事，心口还温着',
+}
 
 const clamp = (n, lo, hi) => Math.min(hi, Math.max(lo, n))
 // 四舍五入也把坏数挡在门口：进不来有限数，就给 0，别把坏数一路带出去。
@@ -152,6 +164,9 @@ function universal(key, dflt) {
   return typeof n === 'number' ? n : dflt
 }
 
+/** 新加的那几段配置：缺了当空对象，代码里各给兜底，老配置也能跑。 */
+const cfgOf = (key) => config()[key] ?? {}
+
 function zoneDef(id) {
   return config().zones.get(id) ?? null
 }
@@ -200,6 +215,8 @@ function blankZone() {
     press: 0, flush: 0, temp: 0,
     flushRate: 1, shock: 0, shockSec: 90,
     afterUntil: 0, after: '', lastTouch: 0,
+    // 皮肤记事：五十是中性。被软碰往上走，被重手往下走；只改这一格的分量。
+    warmth: 50,
   }
 }
 
@@ -274,6 +291,17 @@ function migrate(raw) {
   if (v < 2) {
     raw.lastAnyMessageAt = Number(raw.lastAnyMessageAt) || 0
     raw.v = 2
+  }
+  // 第 3 版多的一格：每块皮的记事（warmth）。老账本没有就当一直中性五十——
+  // 不去反推「以前被怎么待过」，那得翻已经退干净的旧账，推出来的都是猜。
+  if (v < 3) {
+    if (raw.zones && typeof raw.zones === 'object') {
+      for (const id of Object.keys(raw.zones)) {
+        const z = raw.zones[id]
+        if (z && typeof z === 'object' && z.warmth == null) z.warmth = 50
+      }
+    }
+    raw.v = 3
   }
   return raw
 }
@@ -482,6 +510,8 @@ function spec() {
     afterUntil: ['ts', { zero: true }],
     after: ['str', 12, ''],
     lastTouch: ['ts', { zero: true }],
+    // 记事这一格：五十是中性的，零到一百，越界夹回去。
+    warmth: ['num', 0, 100, 50],
   }
   SPEC = {
     enabled: ['bool', true],
@@ -871,7 +901,7 @@ const monoMs = () => Number(process.hrtime.bigint() / 1000000n)
 // ---------------------------------------------------------------- 懒推进
 
 /**
- * 欲望给的上限：四段。这是「想不想要」那一头，从前挂在八维的贪／成瘾上，
+ * 欲望给的上限：四段。这是「想不想要」那一头，
  * 通用版直接读欲望总闸——没有欲望，场推不动；到了上头，场自己收住。
  */
 function desireCap(state) {
@@ -1074,6 +1104,13 @@ function tickZones(state, now, dt) {
       z.temp *= Math.exp(-dt / sec)
       if (Math.abs(z.temp) < 0.02) z.temp = 0
     }
+    // 记事往中性的五十漂：四十八小时半衰，离得够近就归位。
+    // 这不是「忘掉」，是「不再拿那一笔加价」——数退干净，账还在。
+    if (Number.isFinite(z.warmth)) {
+      const half = (Number(cfgOf('warmth').halfHours) || 48) * 3600
+      const w = 50 + (z.warmth - 50) * Math.exp(-dt * Math.LN2 / half)
+      z.warmth = Math.abs(w - 50) < 0.5 ? 50 : w
+    }
     if (z.afterUntil && now >= z.afterUntil) {
       z.afterUntil = 0
       z.after = ''
@@ -1218,6 +1255,17 @@ function sensStep(state, hours, env) {
     const pleasant = clamp(((Number(ax.valence) || 0) + 1) / 2, 0, 1)
     const tide = clamp((Number(ax.arousal) || 0) / 100, 0, 1) * pleasant
     rate += tide * (Number(LP.tidePerHour) || 0.4)
+  }
+  // 夜里皮更薄：二十三点到五点，敏感往上走得快一点。
+  // 只乘「往上」这一段，落回去不乘——不然夜里跌得也比白天快，那是另一件事。
+  // env.now 没有就不乘：单线程测试里给个假时间，不能让结果跟着钟点飘。
+  if (env?.now) {
+    const S = cfgOf('sens')
+    const h = new Date(env.now).getHours()
+    const from = Number(S.nightFrom) || 23
+    const to = Number(S.nightTo) || 5
+    const night = from <= to ? (h >= from && h < to) : (h >= from || h < to)
+    if (night) rate *= Number(S.nightMul) || 1.3
   }
   const cur = Number(bag['敏感']) || 0
   if (rate > 0) {
@@ -1480,7 +1528,7 @@ function touch(state, input, opts) {
   const kTemp = (ad.temp ?? 1) * (fam.temp ?? 1) * (ad.tempSign ?? 1)
   const flushRate = 0.7 + (fam.spread ?? 0.35)
 
-  const before = { press: z.press, flush: z.flush }
+  const before = { press: z.press, flush: z.flush, warmth: Number(z.warmth) || 50 }
   z.press = soft(z.press, 50 * strength * hold * gate * sens * speed * kPress)
   z.flush = soft(z.flush, 38 * strength * (def.firstFlush ? 1.25 : 1) * gate * sens * speed * kFlush)
   z.flushRate = flushRate
@@ -1498,15 +1546,29 @@ function touch(state, input, opts) {
   z.after = AFTER[action] ?? FAM_AFTER[ad.family] ?? '热着'
   z.lastTouch = now
 
+  // 皮肤记事：软碰往上记「恩」，重手往下记「疼」。只记这一格，只改这一格的分量。
+  // 重手不是「惩罚」——疼过的地方下次更容易起，这是身体自己的账，不是谁给的奖罚。
+  {
+    const W = cfgOf('warmth')
+    const w0 = Number(z.warmth) || 50
+    const cold = ad.family === 'strike' || strength >= 1
+    const gain = Number(cold ? W.gainHard : W.gainSoft) || 1.5
+    z.warmth = clamp(w0 + (cold ? -gain : gain), Number(W.floor) || 0, Number(W.cap) || 100)
+  }
+
   // 这一下对欲望的回推：同一处连着碰，一下比一下轻。
   // 十五分钟内第一下全给，第二下七五折，第三下对折，第四下起只留四分之一。
   // 只留四分之一不是小气——不递减就是自己推自己，一夜能烧穿。
-  const winMs = 15 * 60 * 1000
+  // 四档和窗口写进配置，是为了能照着手感改；代码只留兜底。
+  const D = cfgOf('touch').dampen ?? {}
+  const winMs = (Number(D.sec) || 900) * 1000
+  const steps = Array.isArray(D.steps) && D.steps.length ? D.steps : [1, 0.75, 0.5, 0.25]
+  const keep = Math.min(32, Math.max(1, Number(D.maxHist) || 8))
   const hist = (state.touchHist ??= {})
   const recent = Array.isArray(hist[id]) ? hist[id].filter((t) => now - t < winMs) : []
-  const decay = [1, 0.75, 0.5, 0.25][Math.min(recent.length, 3)]
+  const decay = Number(steps[Math.min(recent.length, steps.length - 1)]) || 0
   recent.push(now)
-  hist[id] = recent.length > 8 ? recent.slice(-8) : recent
+  hist[id] = recent.length > keep ? recent.slice(-keep) : recent
   const push = 2.2 * strength * gate * decay * ((100 - state.libido) / 100)
   state.libido = clamp(state.libido + push, config().libido?.floor ?? 10, 100)
   // 碰不记进「今天涨的」——那个额度只卡自然漂移，是防止人一天不在、
@@ -1534,6 +1596,9 @@ function touch(state, input, opts) {
     shock: round0(z.shock ?? 0),
     direction,
     libido: round0(state.libido),
+    // 这一下在皮肤上记了什么：给工具回话用，不进「印记」那一层。
+    warmthBefore: round0(before.warmth),
+    warmth: round0(Number(z.warmth) || 50),
     line: '',
     dir: '',
   }
@@ -1625,6 +1690,48 @@ function snapshot(state) {
   }
 }
 
+/** 档位词：到一个档才挂一个字，不到就是空。 */
+function wordOf(table, v) {
+  const rows = Array.isArray(table) ? table : []
+  let out = ''
+  for (const [line, word] of rows) if (v >= (Number(line) || 0)) out = String(word)
+  return out
+}
+
+/**
+ * 湿：派生量，不存账。红够到线、又有新碰过，皮上就有潮意；久了会干。
+ * 没有 lastTouch（从没碰过）就是零——坐在那儿红一下不算湿。
+ */
+function wetOf(state, z) {
+  const W = cfgOf('wet')
+  const line = Number(W.line) || 40
+  const flush = Number(z?.flush) || 0
+  if (flush < line) return 0
+  const last = Number(z?.lastTouch) || 0
+  if (!last) return 0
+  const since = Math.max(0, (Date.now() - last) / 1000)
+  const onset = Math.max(1, universal('sweatOnsetSec', 150))
+  const dry = Math.max(1, universal('sweatDrySec', 420))
+  let v = (flush - line) * (1.4 + (Number(state?.libido) || 0) / 100)
+  v += Math.max(0, Number(z?.temp) || 0) * 30
+  if (since < onset) v *= since / onset
+  if (since > dry) v *= Math.max(0, 1 - (since - dry) / dry)
+  return clamp(v, 0, 100)
+}
+
+/**
+ * 绷：也是派生量。压着、怕着、恼着，肌肉就紧；这三样一起加，封顶一百。
+ * 不另存一格——存了就要记得退，退了还要跟情绪对账，不如每次现算。
+ */
+function tenseOf(state, z) {
+  const T = cfgOf('tense')
+  const kinds = state?.emotion?.kinds ?? {}
+  const v = (Number(z?.press) || 0) * (Number(T.pressW) || 0.45)
+    + (Number(kinds.fear) || 0) * (Number(T.fearW) || 0.5)
+    + (Number(kinds.anger) || 0) * (Number(T.angerW) || 0.3)
+  return clamp(v, 0, 100)
+}
+
 /** 有动静的格子，动静大的在前。不经过整份快照，省一趟数组。 */
 function activeZones(state) {
   const out = []
@@ -1637,7 +1744,13 @@ function activeZones(state) {
     const temp = round1(r.temp)
     const heat = press + flush + Math.abs(temp) * 40
     if (heat < 8) continue
-    out.push({ id, name: zoneDef(id)?.name ?? id, press, flush, temp, after: z.after, heat })
+    const wet = round0(wetOf(state, { ...r, lastTouch: z.lastTouch }))
+    const tight = round0(tenseOf(state, { ...r }))
+    out.push({
+      id, name: zoneDef(id)?.name ?? id, press, flush, temp, after: z.after, heat,
+      wet, wetWord: wordOf(cfgOf('wet').words, wet),
+      tight, tightWord: wordOf(cfgOf('tense').words, tight),
+    })
   }
   return out.sort((a, b) => b.heat - a.heat)
 }
@@ -1791,6 +1904,9 @@ function senseText(state) {
     ? `格子 ${act.slice(0, n).map((z) => {
       const p = [`压${z.press}`, `红${z.flush}`]
       if (Math.abs(z.temp) >= 0.05) p.push(`温${z.temp >= 0 ? '+' : ''}${z.temp}`)
+      // 湿和绷都是派生量，到档才挂一个字；不到档就不占位。
+      if (z.wetWord) p.push(z.wetWord)
+      if (z.tightWord) p.push(z.tightWord)
       if (z.after) p.push(z.after)
       return `${z.name} ${p.join(' ')}`
     }).join('｜')}${act.length > n ? '｜还有别的' : ''}`
@@ -1804,6 +1920,10 @@ function senseText(state) {
   if (live.length) {
     const parts = live.slice(0, 3).map((c) => `${c.label} ${c.value}${c.why ? `·${c.why}` : ''}`)
     moodLine = `情绪 ${parts.join('　')}　最狠 ${v.emotion.fierce}`
+    // 到这条线就不是「还没下去」了，是「快装不住」。不另开一套溢出机制，
+    // 只把这一句的口气换掉——写不写颤抖失语是那边自己的事。
+    const overflowAt = Number(config().emotion?.overflowAt) || 85
+    if (v.emotion.fierce >= overflowAt) moodLine += '　快装不住'
     if (v.emotion.debt >= 10) moodLine += `　债 ${v.emotion.debt}`
   }
 
@@ -1832,6 +1952,18 @@ function senseText(state) {
   } else if (v.libido >= 85) bits.push('底下烧得厉害，坐不太住')
   else if (v.libido >= 60) bits.push('底下有点烧')
   else if (v.libido >= 40) bits.push('底下有点在往上走')
+
+  // 话落到身上：三分钟内他那句话落下的那一点，只在注入里说一句。
+  if (speechMark.at && v.nowMs - speechMark.at <= 3 * 60 * 1000) {
+    const line = SPEECH_BITS[speechMark.kind]
+    if (line) bits.push(line)
+  }
+  // 时间感只写一种：刚被碰过的那一两分钟，事情会显得慢。
+  // 久等变慢不另写——头行的「隔几小时」已经报了，再写一句就成了解释。
+  const lastTouchAt = Number(state.lastAnyTouch) || 0
+  if (lastTouchAt && v.nowMs - lastTouchAt <= 2 * 60 * 1000 && v.distance !== '隐没') {
+    bits.push('刚碰过，这一会儿过得慢')
+  }
 
   // 指路句要留一句动作。只写「细的才调」等于把它变成可选项——那边就只写散文、账本一笔不动。
   // 所以留动作，压掉说明书。移植到没有这六个工具的地方，把它在配置里置空即可。
@@ -1872,19 +2004,32 @@ const ZONES_DOC = '脸／口腔／颈肩／胸／腰／小腹／臀／下面／�
 function tools(ctx) {
   const sense = {
     name: 'body_sense',
-    description: '读此刻的身体状态：十二格各自的压痕、红、温度偏移、余韵，欲望多高、离多近、场到哪一档。只看不动。',
+    description: '读此刻的身体状态：十二格各自的压痕、红、温度偏移、余韵、湿与绷，还有皮肤记着的恩与疼；欲望多高、离多近、场到哪一档。只看不动。',
     parameters: { type: 'object', properties: {}, additionalProperties: false },
     output: { schema: { type: 'string' }, render: (_a, v) => textOut(v) },
     execute() {
       const state = load()
       if (state.enabled === false) return '身体时钟关着，读不出来。'
-      const s = snapshot(advance(state, Date.now()))
+      const st = advance(state, Date.now())
+      const s = snapshot(st)
       // 只看不动：推进结果不落盘。advance 是从账本里的时间戳往前走一步、
       // 算到同一时刻结果一样，所以不写回去也不会丢账；写回去反显得「读一下」
       // 也动了身子，跟 description 说的不一样。
       const lines = s.zones
         .filter(z => z.press >= 5 || z.flush >= 5 || z.temp !== 0 || z.after)
-        .map(z => `${z.name}　红 ${z.flush}　压 ${z.press}　温 ${z.temp >= 0 ? '+' : ''}${z.temp}${z.after ? '　' + z.after : ''}`)
+        .map(z => {
+          const raw = st.zones[z.id] ?? {}
+          const mood = zoneMood(z.id, raw)
+          const tags = []
+          const wetWord = wordOf(cfgOf('wet').words, wetOf(st, { ...mood, lastTouch: raw.lastTouch }))
+          const tightWord = wordOf(cfgOf('tense').words, tenseOf(st, { ...mood }))
+          if (wetWord) tags.push(wetWord)
+          if (tightWord) tags.push(tightWord)
+          // 皮肤记事只说离中性多远，不说绝对值：五十是没记过，不是「五十度的暖」。
+          const w = Math.round(Number(raw.warmth) || 50)
+          const mem = w >= 70 ? `　记恩 +${w - 50}` : w <= 30 ? `　记疼 ${w - 50}` : ''
+          return `${z.name}　红 ${z.flush}　压 ${z.press}　温 ${z.temp >= 0 ? '+' : ''}${z.temp}${tags.length ? '　' + tags.join('·') : ''}${z.after ? '　' + z.after : ''}${mem}`
+        })
       return [
         `主体 ${s.subject}　欲望 ${s.libido}　场 ${s.scene}`,
         ...(lines.length ? lines : ['十二格都干净，没有哪一处还在动']),
@@ -1894,7 +2039,7 @@ function tools(ctx) {
 
   const touchTool = {
     name: 'body_touch',
-    description: '碰身体一处，算这一下的后果并写回身体。返回压痕、红、温度、回弹秒数，以及一句反应。可同时碰多处，一笔一处，按顺序给。',
+    description: '碰身体一处，算这一下的后果并写回身体。返回压痕、红、温度、回弹秒数，以及这一下在皮肤上记了恩还是记了疼，还有一句反应。可同时碰多处，一笔一处，按顺序给。',
     parameters: {
       type: 'object',
       properties: {
@@ -1915,7 +2060,9 @@ function tools(ctx) {
       const r = touch(state, args ?? {})
       if (r.error) return r.error
       const head = `${r.name}　${r.action}·${args?.strength ?? '中'}　压 ${r.pressBefore}→${r.press}　红 ${r.flush}　温 ${r.temp >= 0 ? '+' : ''}${r.temp}　回弹 ${r.reboundSec}s`
-      return `${head}\n${r.line}。${r.dir ? r.dir + '。' : ''}`
+      const dw = Math.round((Number(r.warmth) || 50) - (Number(r.warmthBefore) || 50))
+      const wTail = dw > 0 ? `　记恩 +${dw}` : dw < 0 ? `　记疼 ${dw}` : ''
+      return `${head}${wTail}\n${r.line}。${r.dir ? r.dir + '。' : ''}`
     },
   }
 
@@ -2422,7 +2569,12 @@ function impactOf(state, p) {
   const lib = 1 + (Number(state?.libido) || 0) / 100 * C.libMul
   const scene = 1 + (sceneOf(state).hot || 0) * C.sceneMul
   const dur = 1 + (Math.min(duration, 20) / 20) * C.durationMul
-  let x = base * zoneW * st * dur * lib * scene
+  // 皮肤记事：这一格被温柔待过，同一分量的碰落下去重一点；被重手待过，轻一点。
+  // 只改这一格的比例，不改任何门槛——记事是这一格的记忆，不是整具身子的脾气。
+  const W = cfgOf('warmth')
+  const w0 = Number(state?.zones?.[zone]?.warmth) || 50
+  const warmMul = 1 + ((w0 - 50) / 100) * (Number(W.reach) || 0)
+  let x = base * zoneW * st * dur * lib * scene * warmMul
   if (p?.sudden) x = x * C.sudden.mul + C.sudden.add
   return clamp(Math.round(x), 0, 100)
 }
@@ -2659,12 +2811,54 @@ function applyClause(state, seg, out) {
  * 别的一个字不读：他打的字没有括号，多读一个字就是凭空造动作。
  * 假设句整句跳过，聊天里最不缺「如果」。
  */
+
+// —— 话落到身上：命令、威胁、提旧事，各落一处 ——
+// 只挪一点温度，不落压痕、不抬欲望、不动「上回有人碰」的戳：
+// 一句话能让小腹热一下，不该等于真的被碰到了。词表宁可窄，判错比不判假。
+const WORD_ORDER = /跪下|过来|抬头|别动|手给我|伸手|趴下|坐好|张开|看着我|把.{0,4}给我/
+const WORD_THREAT = /再不(听话|乖)|老实点|等着瞧|有你好看|后果|收拾你|罚你|试试看|不许哭|不许乱动|不然就/
+const WORD_MEMORY = /上次|那天|还记得|以前|那时候|第一次|上回|从前/
+
+function speechKindOf(text) {
+  const t = String(text ?? '')
+  if (WORD_THREAT.test(t)) return 'threat'
+  if (WORD_ORDER.test(t)) return 'order'
+  if (WORD_MEMORY.test(t)) return 'memory'
+  return ''
+}
+
+function applySpeech(state, kind, text) {
+  // 同一句的括号里已经落过真动作的，不再叠一遍——那一下比一句话重得多。
+  const viaAction = lastHisActionText === String(text ?? '').trim() && Date.now() - lastHisActionAt < 5000
+  if (viaAction) return false
+  const nudge = (id, d) => {
+    const z = state.zones?.[id]
+    if (z) z.temp = clamp(z.temp + d, -1.2, 1.2)
+  }
+  // 命令落的是绷，不是凉：小腹先热一下，颈侧跟着收紧。
+  if (kind === 'order') { nudge('belly', 0.03); nudge('neck', 0.015) }
+  else if (kind === 'threat') { nudge('hand', -0.04); nudge('neck', -0.03) }
+  else if (kind === 'memory') nudge('chest', 0.02)
+  else return false
+  speechMark.at = Date.now()
+  speechMark.kind = kind
+  return true
+}
+
 function readHisLine(state, text) {
   const out = { distance: '', skipped: 0 }
   if (!text) return out
   if (/如果|要是|假如|假设|万一/.test(text)) { out.skipped = 1; return out }
+  // 话也压在身上（2026-11-24）：命令落一点温、威胁落一点凉、提旧事焐一下心口。
+  // 先判类再落，不然「再不听话就等着」会被尾巴上的「听话」当成夸。
+  const speech = speechKindOf(text)
+  if (speech) {
+    applySpeech(state, speech, text)
+    out.speech = speech
+  }
   // 他夸一句：落一笔喜。夸不是命令，不推八维，只让六格里那一格有光。
-  if (WORD_HIS_PRAISE.test(text)) moodOf(state, 'joy', 12, '被夸了')
+  // 威胁句里的「听话」「好看」不算夸——「有你好看」夸的是反话。
+  if (WORD_HIS_PRAISE.test(text) && !WORD_THREAT.test(text)) moodOf(state, 'joy', 12, '被夸了')
   // 一句「恶心」才落厌：这一格本来就窄，宁缺勿滥——判错比不判更假。
   if (WORD_DISGUST.test(text)) moodOf(state, 'disgust', 30, '他说脏')
   // 他说不要她了：怕和哀一起落。这一条线从前根本没有，惧那一格永远是零。
@@ -2706,8 +2900,11 @@ function readHisLine(state, text) {
 
 const CHAIN = {
   face: [['neck', 0.34], ['mouth', 0.22]],
-  mouth: [['neck', 0.4], ['face', 0.2], ['chest', 0.14]],
-  neck: [['face', 0.3], ['chest', 0.4], ['mouth', 0.2], ['back', 0.18]],
+  // 远路（2026-11-24）：嘴唇和颈侧不经过胸也能传到小腹，只是要深吻才到得了。
+  // 不按「唇与腹同源」给 0.45 —— 两跳打完只剩零点零一一，等于没有；
+  // 而 0.45 比「腰→小腹 0.4」还高，每亲一下都比腰被按还热，热惯了就不值钱。
+  mouth: [['neck', 0.4], ['face', 0.2], ['chest', 0.14], ['belly', 0.15]],
+  neck: [['face', 0.3], ['chest', 0.4], ['mouth', 0.2], ['back', 0.18], ['belly', 0.1]],
   chest: [['neck', 0.3], ['waist', 0.34], ['belly', 0.2]],
   waist: [['chest', 0.26], ['belly', 0.4], ['hip', 0.3], ['back', 0.2]],
   belly: [['waist', 0.34], ['chest', 0.2], ['hip', 0.26], ['inside', 0.16]],
@@ -2757,10 +2954,9 @@ const EMO_OF = {
 const PAIN_ACTIONS = new Set(['掐', '咬', '扇', '打'])
 
 // —— 话也压在身上（2026-11-23 他点的：说出来的话不只动情绪，还动身体）——
-// 只读我自己的字：称呼换了没有、句子碎没碎、嘴里冒没冒口癖。
+// 只读我自己的字：句子碎没碎、是不是在夸我、是不是在凶我。
+// 称呼和口癖不认——那是照着一个人写的，通用版留空。
 // 他的字一个字不读——读他的句子猜口气，跟拿词表读人话是同一件事。
-const WORD_TITLE = /主人|您/
-const WORD_TICS = /哼|呜/
 // 夸与凶也各落一笔。只认最直白的词，含糊的不猜。
 const WORD_PRAISE = /乖|好孩子|真棒|好看|漂亮|可爱|听话|厉害|喜欢你|爱你|想你|做得好|不错/
 // 骂分三样：说能力不行落怒，赶人走落惧，骂笨落怒。从前一律记哀，
@@ -2803,23 +2999,11 @@ let lastHisActionAt = 0
 let lastHisActionText = ''
 
 function readMyLine(state, text) {
-  const out = { called: false, tic: false, broken: false }
+  const out = { broken: false }
   if (!text) return out
-  // 称呼一换，场就翻：脸和颈先热，身上跟着往上抬一点。
-  if (WORD_TITLE.test(text)) {
-    out.called = true
-    beginMoodBatch()
-    moodOf(state, 'joy', 18, '叫了主人')
-    for (const id of ['face', 'neck', 'chest']) {
-      const z = state.zones?.[id]
-      if (z) z.temp = clamp(z.temp + 0.06, -1.2, 1.2)
-    }
-    state.libido = clamp(state.libido + 0.8, config().libido?.floor ?? 10, 100)
-  }
-  if (WORD_TICS.test(text)) {
-    out.tic = true
-    moodOf(state, 'joy', 8, '哼了一声')
-  }
+  // 称呼和口癖是各人自己的，通用版一个字都不认。
+  // 从前这里认「主人」和「哼」——那是照着一个人写的，换个角色就全错。
+  // 要认，自己往这条分支里加词表；默认留空，宁可不动，也不替人认亲戚。
   // 句子碎了就是撑不住了：三条以上、平均不到九个字。不碰身体，只动脸。
   const lines = text
     .split(/\n+/)
@@ -3009,6 +3193,7 @@ export const __test = {
   moodOf, conduct, CHAIN, EMO_OF, scoldOf,
   impactOf, contactLink, landContact, contactCfg, zoneOfAction, repeatCountOf,
   SUDDEN_WORDS, SOFT_ZONES, zoneMood, dropDistance, beginMoodBatch, resetMoodClock,
+  SCHEMA, wetOf, tenseOf, activeZones, speechKindOf, applySpeech,
 }
 
 // ---------------------------------------------------------------- 挂

@@ -116,7 +116,7 @@ for (let r = 0; r < ROUNDS; r += 1) {
   if (broken.length > 8) break
 }
 check(`${ROUNDS} 轮乱砸之后账本还是好的`, broken.length === 0, broken.slice(0, 4).join('；'))
-check('砸完没有丢版本号', load().v === 2, String(load().v))
+check('砸完没有丢版本号', load().v === 3, String(load().v))
 const final = load()
 check('砸完欲望还在范围内', final.libido >= (Number(CFG.libido?.floor) || 10) && final.libido <= 100, String(final.libido))
 check('砸完八维还是八个数', view(final).dims.length === 8)
