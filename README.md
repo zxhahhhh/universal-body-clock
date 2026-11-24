@@ -158,7 +158,7 @@ locale/zh.json        插件页显示的名字与说明
 locale/en.json        同上，英文
 docs/design.md        设计取舍与架构
 docs/DETAIL.md        实现细节（插件页的详情文档就是它）
-test/                 十二个测试（可选，要 Node）
+test/                 十三个测试（可选，要 Node）
 icon.svg              插件图标
 LICENSE               许可证（MIT）
 CHANGELOG.md          版本变更记录
