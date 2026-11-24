@@ -82,6 +82,25 @@
     }
   },
 
+  "contact": {
+    "note": "碰一下有多重，最后落成一个数：动作的基数乘格子的权重，再乘力度、按了多久、当下烧得多高、场多热。突然那一下再抬一截。同一个动作落在嘴上和落在手上不是一回事，所以格子各自有权重。要按具体的人调，只动 base 和 zone 这两张表就够。",
+    "base": {
+      "舔": 30, "贴": 24, "揉": 20, "蹭": 20, "摩": 20, "搓": 18, "擦": 16,
+      "按": 18, "压": 18, "捏": 18, "掐": 22, "咬": 22,
+      "拍": 18, "打": 18, "弹": 16, "扇": 20, "吹": 14
+    },
+    "zone": {
+      "mouth": 1.3, "inside": 1.35, "chest": 1.2, "neck": 1.15, "waist": 1.15,
+      "belly": 1.15, "hip": 1.1, "back": 0.95, "leg": 0.9, "hand": 0.85,
+      "foot": 0.8, "face": 1
+    },
+    "strength": { "轻": 0.85, "中": 1.15, "重": 1.45 },
+    "libMul": 0.6,
+    "sceneMul": 0.5,
+    "durationMul": 0.25,
+    "sudden": { "mul": 0.85, "add": 20 }
+  },
+
   "emotion": {
     "note": "六种是色不是格。同一刻最多两笔，一笔主事件加三个数。强度的衰减比事件慢，事件退了三个数还在，那就是余味。",
     "kinds": ["joy", "anger", "sadness", "fear", "surprise", "disgust"],
@@ -92,7 +111,7 @@
     "debtFallPerDay": 4,
     "debtCap": 100,
     "sensWeight": 0.4,
-    "decay": { "eventSec": 900, "axisSec": 5400, "intensitySec": 900, "kindSec": 1500 },
+    "decay": { "eventSec": 900, "axisSec": 5400, "intensitySec": 900, "kindSec": 21600, "halfOf": { "surprise": 40, "fear": 600 }, "bodySec": 180 },
     "axes": {
       "valence": { "label": "愉悦", "min": -1, "max": 1 },
       "arousal": { "label": "唤醒", "min": 0, "max": 100 },
@@ -140,7 +159,7 @@
     },
     "settle": {
       "note": "一整件事过去之后再加减，不是当场。量按强度折算，重的那笔乘一点五。",
-      "mult": 2.5,
+      "mult": 4,
       "heavyMul": 1.5,
       "heavyAbove": 70,
       "map": {

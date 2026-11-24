@@ -151,13 +151,35 @@ const zonesOf = (s) => textOf(s).split('\n').find((l) => l.startsWith('格子'))
   check('刚起时最狠接近满', peak0 >= 88 && peak0 <= 100, `peak ${peak0}`)
   check('标签叫最狠', mood0.includes('最狠'), mood0)
 
+  // 六小时半衰：八分钟只是擦掉一点点，情绪得留得住。
   advance(s, now() + 8 * 60 * 1000)
   const peak1 = remainingPeak(s.emotion)
   const mood1 = moodOf(s)
   console.log('  ', mood1)
-  check('过半后掉下来', peak1 < peak0 * 0.8 && peak1 > peak0 * 0.55, `peak ${peak0} -> ${peak1}`)
+  check('八分钟后还挂着', peak1 > peak0 * 0.9, `peak ${peak0} -> ${peak1}`)
   check('没有跳回去', peak1 < peak0, `peak ${peak0} -> ${peak1}`)
   check('情绪还挂着', mood1.includes('还没下去') || mood1.includes('情绪'), mood1)
+
+  // 走满一个半衰期（kindSec 六小时），剩下大约一半。
+  advance(s, now() + 6 * 3600 * 1000)
+  const peak2 = remainingPeak(s.emotion)
+  console.log('  ', moodOf(s))
+  check('六小时掉到一半上下', peak2 > peak0 * 0.33 && peak2 < peak0 * 0.6, `peak ${peak0} -> ${peak2}`)
+  check('一路往下', peak2 < peak1, `peak ${peak1} -> ${peak2}`)
+}
+
+// 半衰期单独写得出来：惊给四十分钟，走四十分钟就掉一半。
+{
+  console.log('=== 8b. 半衰期 ===')
+  const s = blankState()
+  s.libido = 40
+  s.at = now() - 5000
+  feel(s, { kind: 'surprise', intensity: 80 })
+  const p0 = remainingPeak(s.emotion)
+  advance(s, now() + 40 * 60 * 1000)
+  const p1 = remainingPeak(s.emotion)
+  console.log(`  surprise ${p0} -> ${p1}`)
+  check('惊四十分钟掉一半', p1 > p0 * 0.4 && p1 < p0 * 0.62, `${p0} -> ${p1}`)
 }
 
 // === 9. 面板轮询：没变就不该写 ===
@@ -173,7 +195,7 @@ const zonesOf = (s) => textOf(s).split('\n').find((l) => l.startsWith('格子'))
   check('改了数算变', sigOf(s) !== b)
 }
 
-// === 10. 静着：五行，不摊格子 ===
+// === 10. 静着：四行，不摊格子，也不报空情绪 ===
 {
   console.log('=== 10. 静着 ===')
   const s = blankState()
@@ -182,9 +204,9 @@ const zonesOf = (s) => textOf(s).split('\n').find((l) => l.startsWith('格子'))
   s.at = now() - 5000
   const lines = textOf(s).split('\n')
   console.log('  ', lines.join(' ／ '))
-  check('五行（含指路那一行）', lines.length === 5, `lines ${lines.length}`)
+  check('四行（含指路那一行）', lines.length === 4, `lines ${lines.length}`)
   check('没有格子那一行', !zonesOf(s), zonesOf(s))
-  check('情绪那一行在', /^情绪 /.test(lines[2]), lines[2])
+  check('心里平着就不报情绪', !moodOf(s), moodOf(s))
 }
 
 // === 11. 场：平静／微动／强烈，怒不把场推上去 ===

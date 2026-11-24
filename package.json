@@ -1,6 +1,6 @@
 {
   "name": "universal-body-clock",
-  "version": "1.3.1",
+  "version": "1.4.0",
   "type": "module",
   "description": "给 AI 装一副会走的身子：十二格、八维、欲望、情绪、距离，还读你正文里的动作，碰一处往外传一圈。",
   "exports": {
