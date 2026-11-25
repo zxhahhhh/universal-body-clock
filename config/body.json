@@ -35,7 +35,7 @@
     { "id": "inside", "name": "下面", "reboundSec": 480, "flushFallSec": 480, "afterSec": 140, "note": "黏膜软，红来得快退得也快；一碰就湿" },
     { "id": "hand", "name": "手", "reboundSec": 300, "flushFallSec": 360, "afterSec": 55, "note": "指节多，先发白再发红；攥紧的时候骨节显出来" },
     { "id": "leg", "name": "腿", "reboundSec": 420, "flushFallSec": 540, "afterSec": 80, "note": "内侧最软；跪久了膝盖会压出印子" },
-    { "id": "foot", "name": "脚", "reboundSec": 480, "flushFallSec": 480, "afterSec": 70, "note": "脚背薄，脚底怕硌；一凉就往回缩" },
+    { "id": "foot", "name": "脚", "pressMul": 2.5, "reboundSec": 480, "flushFallSec": 480, "afterSec": 70, "note": "脚背薄，脚底怕硌；一凉就往回缩" },
     { "id": "back", "name": "背", "reboundSec": 300, "flushFallSec": 360, "afterSec": 100, "note": "皮厚，印子淡；凉得比别处快，贴着会慢慢热起来" }
   ],
 
@@ -64,7 +64,7 @@
     "搓": { "family": "rub", "temp": 1.6 },
     "贴": { "family": "bare", "temp": 1.2 },
     "吹": { "family": "bare", "temp": 1.1, "tempSign": -1 },
-    "舔": { "family": "bare", "press": 0.2, "temp": 0.9, "flush": 0.6 }
+    "舔": { "family": "rub", "press": 0.3, "flush": 0.8, "temp": 0.9 }
   },
 
   "direction": {

@@ -507,7 +507,7 @@ function spec() {
     flushRate: ['num', 0.2, 5, 1],
     shock: ['num', 0, 100, 0],
     shockSec: ['num', 0, 86400, 90],
-    afterUntil: ['ts', { zero: true }],
+    afterUntil: ['ts', { zero: true, future: true }],
     after: ['str', 12, ''],
     lastTouch: ['ts', { zero: true }],
     // 记事这一格：五十是中性的，零到一百，越界夹回去。
@@ -1523,7 +1523,7 @@ function touch(state, input, opts) {
   const soft = (cur, add) => clamp(cur + add * ((100 - cur) / 100), 0, 100)
 
   // 四族差的就是这几样：压占多少、红占多少、红散多开、温度升多少。
-  const kPress = (ad.press ?? 1) * (fam.press ?? 1)
+  const kPress = (ad.press ?? 1) * (fam.press ?? 1) * (Number(def.pressMul) || 1)
   const kFlush = (ad.flush ?? 1) * (fam.flush ?? 1)
   const kTemp = (ad.temp ?? 1) * (fam.temp ?? 1) * (ad.tempSign ?? 1)
   const flushRate = 0.7 + (fam.spread ?? 0.35)
@@ -2455,8 +2455,145 @@ const ACTION_WORDS = [
   ['拽', '捏'], ['扯', '捏'], ['拉', '捏'], ['拧', '掐'], ['揪', '掐'], ['挠', '擦'],
   ['吮', '舔'], ['啃', '舔'], ['含', '舔'], ['吸', '舔'],
   ['吹', '吹'],
+  ['伸进', '揉'], ['伸向', '揉'], ['伸出', '揉'], ['伸', '揉'],
+  ['探进', '揉'], ['探入', '揉'], ['探', '揉'],
+  ['滑过', '揉'], ['滑', '揉'], ['划过', '擦'], ['划', '擦'],
+  ['放到', '贴'], ['放在', '贴'], ['搭在', '贴'], ['覆上', '贴'],
+  ['踩住', '压'], ['踩', '压'], ['跨', '压'], ['骑', '压'], ['跪', '压'],
+  ['绕', '贴'], ['缠', '贴'], ['裹', '贴'], ['叼', '咬'],
+  ['顶', '压'], ['撞', '压'], ['磨', '揉'], ['碾', '揉'],
+  ['撩', '揉'], ['拨', '揉'], ['勾', '揉'], ['抽', '揉'], ['挥', '打'], ['掰', '捏'],
+  ['插进', '压'], ['插入', '压'], ['插', '压'],
 ]
 const ACTION_TABLE = [...ACTION_WORDS].sort((a, b) => b[0].length - a[0].length)
+
+// ---------------------------------------------------------------- 读他的话
+// 认部位靠「表里谁先出现」——「双手」的手把胸抢了，就是从这儿来的。
+/** 工具词：说的是用哪儿碰，不是碰到哪儿。剥掉之后还认得出别的格才剥。 */
+const HIS_TOOL_WORDS = ['双手', '两只手', '一只手', '两只', '两手', '指尖', '指腹', '指节', '手掌', '手臂', '手心']
+/** 行为名词：直接说做了什么。落到已有的格子与族上，不另开一套。 */
+const HIS_NOUN_TABLE = [
+  ['口交', 'mouth', '舔'],
+  ['足交', 'foot', '揉'],
+  ['脚交', 'foot', '揉'],
+  ['交尾', 'inside', '插'],
+  ['做爱', 'inside', '插'],
+  ['后入', 'inside', '插'],
+  ['骑乘', 'inside', '插'],
+]
+/** 新认的动作落到已登记的那几个名字上，族才不会取空。 */
+const HIS_ACT_ALIAS = {
+  伸: '揉', 探: '揉', 滑: '揉', 磨: '揉', 碾: '揉', 撩: '揉', 拨: '揉', 勾: '揉', 抽: '揉',
+  划: '擦', 插: '压', 顶: '压', 撞: '压', 踩: '压', 跪: '压', 跨: '压', 骑: '压',
+  绕: '贴', 缠: '贴', 裹: '贴', 叼: '咬', 挥: '打', 掰: '捏',
+}
+/** 脱了才算真贴着；隔着衣料最多隔布。 */
+const HIS_SKIN = /赤裸|一丝不挂|光着|脱了|脱掉|褪下|解开|全裸|裸着|肌肤相贴|贴着皮肤/
+const HIS_CLOTH = /隔着衣|隔着布|隔着被|衣料|衣服隔|隔着/
+/** 一条消息最多认四处。 */
+const HIS_MAX_CONTACTS = 4
+/** 有的词自己就说明了落在哪：跪是腿、插是里面、踩是脚。归族会把名字磨平，这儿单独留一份。 */
+const HIS_WORD_ZONE = {
+  插: 'inside', 插进: 'inside', 插入: 'inside', 伸进: 'inside', 探进: 'inside', 探入: 'inside',
+  跪: 'leg', 踩: 'foot', 踩住: 'foot',
+}
+
+/** 这一句里出现了哪几格，以及它们在第几个字——按长度先占，免得「手」吃掉「手腕」。 */
+function zoneMatches(text) {
+  const hits = []
+  const taken = new Array(text.length).fill(false)
+  for (const [word, zone] of ZONE_TABLE) {
+    let from = 0
+    for (;;) {
+      const i = text.indexOf(word, from)
+      if (i < 0) break
+      let free = true
+      for (let k = i; k < i + word.length; k += 1) if (taken[k]) { free = false; break }
+      if (free) {
+        hits.push({ zone, i, end: i + word.length })
+        for (let k = i; k < i + word.length; k += 1) taken[k] = true
+      }
+      from = i + 1
+    }
+  }
+  return hits
+}
+
+function stripHisTools(text) {
+  let s = text
+  for (const w of HIS_TOOL_WORDS) s = s.split(w).join('')
+  return s !== text && zoneMatches(s).length ? s : text
+}
+
+/** 动作落在那一个字上，以及它在句里的位置。 */
+function hisActionAt(text) {
+  for (const [word, act] of ACTION_TABLE) {
+    const i = text.indexOf(word)
+    if (i >= 0) return { act, word, index: i }
+  }
+  return null
+}
+
+/** 动词后面最近的那一格优先；后面没有，才回头看前面最近的。 */
+function zoneNearAction(text, actionIndex, actionLen) {
+  const hits = zoneMatches(text)
+  if (!hits.length) return ''
+  const after = hits.filter((h) => h.i >= actionIndex + actionLen)
+  if (after.length) return after.sort((a, b) => a.i - b.i)[0].zone
+  const before = hits.filter((h) => h.end <= actionIndex)
+  if (before.length) return before.sort((a, b) => b.end - a.end)[0].zone
+  return hits.sort((a, b) => Math.abs(a.i - actionIndex) - Math.abs(b.i - actionIndex))[0].zone
+}
+
+function distOfText(text, act) {
+  if (HIS_SKIN.test(text)) return '贴肤'
+  if (HIS_CLOTH.test(text)) return '隔布'
+  return act === '贴' ? '隔布' : '贴肤'
+}
+
+/** 一个小句落一处。 */
+function parseHisClause(clause) {
+  const text = stripHisTools(clause)
+  for (const [word, zone, act] of HIS_NOUN_TABLE) {
+    if (text.includes(word)) return { zone, act, strength: strengthOfText(text), dist: '贴肤' }
+  }
+  const hit = hisActionAt(text)
+  if (!hit) return null
+  const zone = zoneNearAction(text, hit.index, hit.word.length)
+  const fallback = HIS_WORD_ZONE[hit.word] ?? ''
+  if (!zone && !fallback && !HIS_ACTION_NO_ZONE.test(text)) return null
+  return {
+    zone: zone || fallback || zoneOfAction(hit.act),
+    act: HIS_ACT_ALIAS[hit.act] ?? hit.act,
+    strength: strengthOfText(text),
+    dist: distOfText(text, hit.act),
+  }
+}
+
+/** 一条消息切成小句，逐句认；同一格只计一次。 */
+function hisClauses(text) {
+  const segs = []
+  BRACKET_RE.lastIndex = 0
+  let m
+  while ((m = BRACKET_RE.exec(text)) !== null && segs.length < 6) {
+    const seg = String(m[1] ?? '').trim()
+    if (seg) segs.push(seg)
+  }
+  const src = segs.length ? segs : [text]
+  const out = []
+  for (const seg of src) {
+    for (const clause of seg.split(/[，,。；;！!？?、\s]+/)) {
+      const c = clause.trim()
+      if (!c) continue
+      const item = parseHisClause(c)
+      if (!item) continue
+      if (out.some((x) => x.zone === item.zone)) continue
+      out.push(item)
+      if (out.length >= HIS_MAX_CONTACTS) return out
+    }
+  }
+  return out
+}
 
 function firstHit(table, text) {
   for (const [word, value] of table) if (text.includes(word)) return value
@@ -2473,7 +2610,7 @@ function actionOfText(text) {
 
 /** 括号不写力气。按轻的算；写了使劲、一把、狠狠才抬一档，重的那一档不给。 */
 function strengthOfText(text) {
-  return /用力|使劲|狠狠|猛地|重重|一把|紧扣|攥紧/.test(text) ? '中' : '轻'
+  return /用力|使劲|狠狠|猛地|重重|一把|紧扣|攥紧|紧紧|死死|死紧|按紧|扣紧|紧/.test(text) ? '中' : '轻'
 }
 
 /** 距离只往上抬，不往下跳；掉档交给 advance 慢慢来。 */
@@ -2541,6 +2678,9 @@ function zoneOfAction(action) {
   const a = String(action || '')
   if (a === '舔') return 'mouth'
   if (a === '贴') return 'chest'
+  if (a === '插') return 'inside'
+  if (a === '踩') return 'foot'
+  if (a === '跪') return 'leg'
   return 'hand'
 }
 
@@ -2664,8 +2804,14 @@ function dropDistance(state) {
  */
 function absorbReply(state, text) {
   // read 记读到了哪几格，unknown 记「有动作、没写部位」那几句。
-  const out = { touches: 0, distance: '', skipped: 0, read: [], unknown: 0 }
+  const out = { touches: 0, distance: '', skipped: 0, read: [], unknown: 0, climax: '' }
   beginMoodBatch()
+  // 她自己写的那一半也认：她说「去了」，账上就该有那一阵。
+  const peakWord = climaxOf(state, text)
+  if (peakWord) {
+    applyClimax(state, text, peakWord, { self: true })
+    out.climax = peakWord
+  }
   if (!text) return out
   const segs = []
   BRACKET_RE.lastIndex = 0
@@ -3037,38 +3183,104 @@ function readMyLine(state, text) {
 // 只认最省事的写法：短句、没有假设、动作和部位挨着。带如果、吗、问号的一律不读。
 const HIS_HYPOTHETICAL = /如果|要是|假如|假设|万一|吗|能不能|可不可以|会不会|想不想|[?？]/
 /** 没写部位时肯认的动作：这几个本身就碰到了哪一格，不是空手比划。 */
-const HIS_ACTION_NO_ZONE = /亲|吻|舔|含|吮|啃|抱|搂|环|枕|埋|贴|靠|抵/
+const HIS_ACTION_NO_ZONE = /亲|吻|舔|含|吮|啃|抱|搂|环|枕|埋|贴|靠|抵|插|跪/
+
+// —— 那一阵（1.4.2）：射、去了、忍不住——从前一句都落不上，做完跟没做在账上一样 ——
+const CLIMAX_WORDS = [
+  { re: /射(?:了|出来|在|进|到)/, word: '射' },
+  // 「高潮」「到了顶」自己就够清楚，不靠场子够不够热。
+  { re: /高潮|到了顶|顶到了/, word: '去了' },
+  // 「去了」单用太容易撞上「去了学校」，要热、要带次数、要落在句尾。
+  { re: /去了/, word: '去了', loose: true },
+  { re: /忍不住(?:了|地)?(?:射|去|到)?|憋不住/, word: '忍不住', loose: true },
+]
+/** 假设、否定、比方：整句不算。只挡「别射/别去」这种，不挡「别停，射了」。 */
+const CLIMAX_SKIP = /如果|要是|假如|假设|万一|假装|差点|没射|不射|没去|不想射|不想去|别射|别去|别到|不许射|不许去/
+/** 字里带射、其实跟那一阵无关的：反射、注射、发射、辐射。 */
+const CLIMAX_FALSE = /反射|注射|发射|辐射|投射|折射|散射|射线|射手|射灯|喷射/
+const CLIMAX_LOOSE_OK = /去了[两三几]?次|去了啊|去了吧|去了$|忍不住了|忍不住地|忍不住$/
+/** 那一下之后还热着的几块。 */
+const CLIMAX_AFTER = { belly: '酸着', inside: '发软', chest: '热着' }
+
+/**
+ * 认「那一阵」。只看明写的几种说法，不猜；「去了」单用太容易撞上「去了学校」，
+ * 所以要么后面带次数或语气，要么这会儿本来就在情趣里。
+ */
+function climaxOf(state, text) {
+  const t = String(text || '').trim()
+  if (!t || t.length > 200) return ''
+  if (CLIMAX_SKIP.test(t)) return ''
+  if (CLIMAX_FALSE.test(t)) return ''
+  const hot = Number(sceneOf(state).hot) || 0
+  // 括号不算语气：她把话写在括号里，句尾那个「去了」后面跟的是括号，不是逗号。
+  const core = t.replace(/[（）()]/g, '')
+  for (const item of CLIMAX_WORDS) {
+    if (!item.re.test(t)) continue
+    if (item.loose && hot < 0.4 && !CLIMAX_LOOSE_OK.test(core)) continue
+    return item.word
+  }
+  return ''
+}
+
+/**
+ * 落那一阵：峰值记在 peakAt 上、余韵八分钟、情欲抬一截再交给回落。
+ * 不写「又涨了」——涨多少、跌多快都交给 libido 那套，这儿只把「做过」记下来。
+ */
+function applyClimax(state, text, word, opts) {
+  const now = Date.now()
+  const L = config().libido ?? {}
+  state.libido = clamp((Number(state.libido) || 0) + 8, Number(L.floor) || 10, 100)
+  state.peakAt = now
+  // 她自己那句不记「他碰过」——不然「多久没碰」会被她自己的身子重置。
+  if (!opts || !opts.self) state.lastAnyTouch = now
+  for (const [zid, after] of Object.entries(CLIMAX_AFTER)) {
+    const z = state.zones?.[zid]
+    if (!z) continue
+    z.flush = clamp((Number(z.flush) || 0) + 22, 0, 100)
+    z.temp = clamp((Number(z.temp) || 0) + 0.5, -1.2, 1.2)
+    z.after = after
+    z.afterUntil = now + 8 * 60 * 1000
+    z.lastTouch = now
+  }
+  // 落在身上那几处：写在哪儿，哪儿留一点热。
+  for (const hit of zoneMatches(String(text || ''))) {
+    const z = state.zones?.[hit.zone]
+    if (!z || CLIMAX_AFTER[hit.zone]) continue
+    z.flush = clamp((Number(z.flush) || 0) + 10, 0, 100)
+    z.after = '热着'
+    z.afterUntil = now + 3 * 60 * 1000
+  }
+  moodOf(state, 'joy', 78, word + '那一下')
+  return { word, libido: round0(state.libido) }
+}
 
 function readHisAction(state, text) {
   if (!text) return 0
   const t = String(text).trim()
-  if (t.length > 16) return 0
+  // 四百字以上多半是整段独白，不当动作读；短句、长句都一句一句认。
+  if (t.length > 400) return 0
   if (HIS_HYPOTHETICAL.test(t)) return 0
-  const inner = (t.match(/[（(]([^）)]{1,24})[）)]/) ?? [])[1] ?? t
-  const zone = zoneOfText(inner)
-  const act = firstHit(ACTION_TABLE, inner)
-  // 没写部位也认：亲、抱、贴这些，动作本身就碰到了哪一格。按动作指一格，
-  // 剩下交给 impactOf 那个数去分轻重——落得粗，也比整句丢掉强。
-  if (!act) return 0
-  if (!zone && !HIS_ACTION_NO_ZONE.test(inner)) return 0
-  const nz = zone || zoneOfAction(act)
-  const jumped = state.distance === '隐没' || state.distance === '靠近'
-  const sudden = SUDDEN_WORDS.test(inner) || (jumped && SOFT_ZONES.has(nz))
-  const r = landContact(state, {
-    zone: nz,
-    action: act,
-    strength: strengthOfText(inner),
-    sudden,
-    // 一个「贴」字，多半是隔着衣服靠上来；其余都按贴着皮肤算。
-    dist: act === '贴' ? '隔布' : '贴肤',
-    why: '他动手了',
-  })
-  if (!r) return 0
-  lastHisActionAt = Date.now()
-  lastHisActionText = t
-  return 1
+  // 那一阵先记：它不该被「这句里没有可落的碰」挡回去。
+  const peak = climaxOf(state, t)
+  if (peak) applyClimax(state, t, peak)
+  const items = hisClauses(t)
+  if (!items.length) return 0
+  let landed = 0
+  for (const it of items) {
+    if (landed >= HIS_MAX_CONTACTS) break
+    const jumped = state.distance === '隐没' || state.distance === '靠近'
+    const sudden = SUDDEN_WORDS.test(t) || (jumped && SOFT_ZONES.has(it.zone))
+    const r = landContact(state, {
+      zone: it.zone, action: it.act, strength: it.strength, sudden, why: '他动手了', dist: it.dist,
+    })
+    if (r) landed += 1
+  }
+  if (landed || peak) {
+    lastHisActionAt = Date.now()
+    lastHisActionText = t
+  }
+  return landed
 }
-
 // —— 碰了会带动情绪（2026-11-23 他点的：抱一下吻一下，心里该动一下）——
 // 从前「身体不回推情绪」是死规矩，怕一碰就冒一股，太廉价。改成只开一条窄道：
 // 只有真被碰着那一下才记，聊天不算；同一种十秒内不加第二笔，一张回复最多三笔。
@@ -3190,6 +3402,7 @@ export const __test = {
   quarantine, promoteBackup, storeInfo, resetStoreFlags, repairState, leaves, describeFixes,
   spec, DIM_ORDER, injectText, movedSig, noChangeLine, FULL_EVERY_MS,
   absorbReply, presenceFloor, messageText, readHisLine, readHisAction, readMyLine,
+  hisClauses, parseHisClause, zoneMatches, distOfText, HIS_MAX_CONTACTS, climaxOf, applyClimax, CLIMAX_WORDS,
   moodOf, conduct, CHAIN, EMO_OF, scoldOf,
   impactOf, contactLink, landContact, contactCfg, zoneOfAction, repeatCountOf,
   SUDDEN_WORDS, SOFT_ZONES, zoneMood, dropDistance, beginMoodBatch, resetMoodClock,
@@ -3197,6 +3410,20 @@ export const __test = {
 }
 
 // ---------------------------------------------------------------- 挂
+
+/** 兜底用：inbox 最近一次动是什么时候，哪些消息编号已经认过。 */
+let lastInboxAt = 0
+const seenMessageIds = new Set()
+
+/** 记一个消息编号；重复的返回 false。只留最近六十四条。 */
+function rememberMessageId(id) {
+  const key = String(id ?? '')
+  if (!key) return true
+  if (seenMessageIds.has(key)) return false
+  seenMessageIds.add(key)
+  if (seenMessageIds.size > 64) seenMessageIds.delete(seenMessageIds.values().next().value)
+  return true
+}
 
 export function apply(ctx) {
   tools(ctx)
@@ -3222,6 +3449,8 @@ export function apply(ctx) {
   })
 
   ctx.on('agent/inbox/claimed', ({ agent, message }) => {
+    lastInboxAt = Date.now()
+    rememberMessageId(message?.id)
     const id = agent?.id || ''
     const last = lastReplyBySession.get(id)
     const his = messageText(message)
@@ -3251,6 +3480,25 @@ export function apply(ctx) {
     if (['隐没', '靠近', '隔布', '贴肤'].indexOf(state.distance ?? '隐没') < wasNear) {
       moodOf(state, 'sadness', 2, '远了')
     }
+    save(state)
+  })
+
+  // 兜底：有的宿主把他的话发在 session/event 的 user/message 上，inbox 那条收不到。
+  // 只在 inbox 一分钟内没动静时才认——两条都到的时候，同一句话不会记两遍。
+  ctx.on('session/event', (session, event) => {
+    if (event?.type !== 'user/message') return
+    const msg = event.data?.message
+    const his = messageText(msg)
+    if (!his) return
+    if (Date.now() - lastInboxAt < 60 * 1000) return
+    if (!rememberMessageId(msg?.id ?? event.data?.id)) return
+    const state = load()
+    if (state.enabled === false) return
+    beginMoodBatch()
+    readHisAction(state, his)
+    readHisLine(state, his)
+    presenceFloor(state)
+    advance(state, Date.now())
     save(state)
   })
 
