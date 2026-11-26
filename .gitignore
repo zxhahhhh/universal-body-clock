@@ -6,3 +6,4 @@ node_modules/
 corrupt-*
 .DS_Store
 Thumbs.db
+lexicon.json

@@ -160,26 +160,26 @@ const zonesOf = (s) => textOf(s).split('\n').find((l) => l.startsWith('格子'))
   check('没有跳回去', peak1 < peak0, `peak ${peak0} -> ${peak1}`)
   check('情绪还挂着', mood1.includes('还没下去') || mood1.includes('情绪'), mood1)
 
-  // 走满一个半衰期（kindSec 六小时），剩下大约一半。
-  advance(s, now() + 6 * 3600 * 1000)
+  // 走满一个半衰期（怒给一小时），剩下大约一半。
+  advance(s, now() + 60 * 60 * 1000)
   const peak2 = remainingPeak(s.emotion)
   console.log('  ', moodOf(s))
-  check('六小时掉到一半上下', peak2 > peak0 * 0.33 && peak2 < peak0 * 0.6, `peak ${peak0} -> ${peak2}`)
+  check('一小时掉到一半上下', peak2 > peak0 * 0.33 && peak2 < peak0 * 0.6, `peak ${peak0} -> ${peak2}`)
   check('一路往下', peak2 < peak1, `peak ${peak1} -> ${peak2}`)
 }
 
-// 半衰期单独写得出来：惊给四十分钟，走四十分钟就掉一半。
+// 半衰期单独写得出来：惊给四十秒，走四十秒就掉一半。
 {
   console.log('=== 8b. 半衰期 ===')
   const s = blankState()
   s.libido = 40
   s.at = now() - 5000
   feel(s, { kind: 'surprise', intensity: 80 })
-  const p0 = remainingPeak(s.emotion)
-  advance(s, now() + 40 * 60 * 1000)
-  const p1 = remainingPeak(s.emotion)
+  const p0 = Number(s.emotion.kinds.surprise)
+  advance(s, now() + 40 * 1000)
+  const p1 = Number(s.emotion.kinds.surprise)
   console.log(`  surprise ${p0} -> ${p1}`)
-  check('惊四十分钟掉一半', p1 > p0 * 0.4 && p1 < p0 * 0.62, `${p0} -> ${p1}`)
+  check('惊四十秒掉一半', p1 > p0 * 0.4 && p1 < p0 * 0.62, `${p0} -> ${p1}`)
 }
 
 // === 9. 面板轮询：没变就不该写 ===
@@ -306,7 +306,7 @@ const zonesOf = (s) => textOf(s).split('\n').find((l) => l.startsWith('格子'))
 {
   const v = view(blankState())
   check('视图只有 subject', v.subject === 'self' && !('face' in v), JSON.stringify(Object.keys(v)))
-  check('视图没有尾巴和纹', !('tail' in v) && !('mark' in v))
+  check('视图不带私货字段', !('tail' in v) && !('mark' in v))
 }
 
 console.log(bad ? `[失败] ${bad} 项` : '[done] 全对')

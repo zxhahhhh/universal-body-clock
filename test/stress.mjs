@@ -322,7 +322,7 @@ function step(s, ms) {
   old.mark = { level: 2, thread: 0.4 }
   writeFileSync(STATE, JSON.stringify(old))
   const mig = load()
-  check('版本还是 3', mig.v === 3, mig.v)
+  check('版本还是 4', mig.v === 4, mig.v)
   check('旧字段被搬掉', !('face' in mig) && !('tail' in mig) && !('mark' in mig) && !('prevFace' in mig), JSON.stringify(Object.keys(mig)))
   check('老账本能读', typeof senseText(mig) === 'string')
   invariants(mig, '清旧字段')
@@ -330,7 +330,7 @@ function step(s, ms) {
   // 坏文件：写半截进去
   writeFileSync(STATE, '{"v":1,"libido":')
   const broken = load()
-  check('坏账本不崩', broken && broken.v === 3, broken?.v)
+  check('坏账本不崩', broken && broken.v === 4, broken?.v)
   invariants(broken, '坏账本')
 
   // 未来版本：只读不覆盖

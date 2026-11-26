@@ -34,7 +34,7 @@ const STATE_PATH = process.env.BODY_CLOCK_STATE || join(STATE_DIR, 'body-clock.j
 const API_PATH = '/api/body-clock'
 const BAK_PATH = STATE_PATH + '.bak'
 /** 状态文件版本。通用版是第 2 版；改字段结构就加一，迁移只往前。 */
-const SCHEMA = 3
+const SCHEMA = 4
 /** 万一拼出来的那几行里有坏值，就换这一句。宁可说实话，也不照着坏数编。 */
 const SAFE_LINE = '[身体] 这一格读不出来，账本可能坏了。调 body_sense 看一眼。'
 
@@ -229,6 +229,9 @@ function blankEmotion() {
     debtAt: 0,
     // 情绪过期后要回写到八维上的那几笔，还没到点就先排着。
     settle: [],
+    // 候选：形状清楚的一笔先挂在这儿，两分钟没人管才落账；影子期只进日志。
+    cand: [],
+    candLog: [],
   }
 }
 
@@ -263,6 +266,8 @@ function blankState() {
     // 每一格都先摆好空数组：契约里的字段一个都不能缺，缺了新身子第一次过检
     // 就会多出一批「补默认值」的修复记录，账本签名跟着变。
     touchHist: Object.fromEntries(zoneIds().map((id) => [id, []])),
+    // 八维当天的涨幅账：哪一格今天已经推了多少，封顶靠它，不靠越推越假。
+    dimsGain: { day: '', bag: Object.fromEntries(DIM_ORDER.map((k) => [k, 0])) },
   }
 }
 
@@ -302,6 +307,15 @@ function migrate(raw) {
       }
     }
     raw.v = 3
+  }
+  // 第 4 版多两处：候选情绪（cand/candLog）和八维的当日涨幅账（dimsGain）。
+  // 老账本没有就当没记过——候选不补，涨幅从今天重新记。
+  if (v < 4) {
+    if (!raw.emotion || typeof raw.emotion !== 'object') raw.emotion = blankEmotion()
+    if (!Array.isArray(raw.emotion.cand)) raw.emotion.cand = []
+    if (!Array.isArray(raw.emotion.candLog)) raw.emotion.candLog = []
+    raw.dimsGain = { day: '', bag: Object.fromEntries(DIM_ORDER.map((k) => [k, 0])) }
+    raw.v = 4
   }
   return raw
 }
@@ -530,6 +544,7 @@ function spec() {
     gainToday: ['num', 0, 1000, 0],
     gainDay: ['str', 10, ''],
     touchHist: ['map', () => zoneIds(), ['list', { max: 8 }, ['ts', { zero: true }]]],
+    dimsGain: ['obj', { day: ['str', 10, ''], bag: ['map', () => DIM_ORDER, ['num', 0, 100, 0]] }],
     // 八维是扁的一层：一具身子一份，不按主体再套一层。
     dims: ['obj', () => dimBag()],
     zones: ['map', () => zoneIds(), ['obj', zoneShape]],
@@ -548,6 +563,20 @@ function spec() {
         at: ['ts', { future: true }],
         delta: ['map', 'any', ['num', -100, 100, 0]],
         why: ['str', 20, ''],
+      }]],
+      cand: ['list', { max: () => Number(config().emotion?.candidate?.cap) || 6 }, ['obj', {
+        kind: ['enum', EMO_ORDER, 'joy'],
+        amt: ['num', 0, 20, 0],
+        why: ['str', 20, ''],
+        text: ['str', 80, ''],
+        at: ['ts', { zero: true }],
+      }]],
+      candLog: ['list', { max: 40 }, ['obj', {
+        kind: ['enum', EMO_ORDER, 'joy'],
+        amt: ['num', 0, 20, 0],
+        why: ['str', 20, ''],
+        at: ['ts', { zero: true }],
+        mode: ['enum', ['shadow', 'admit', 'cancel', 'undo'], 'shadow'],
       }]],
     }],
   }
@@ -950,6 +979,10 @@ function pickDims(rows, max) {
 /** 最近一次被上限压住的那些维，给工具回执和测试看。 */
 let lastDimSkipped = { at: 0, why: '', keys: [] }
 
+function todayKey(d = new Date()) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
 function shiftDims(state, deltas, why = '', ops = {}) {
   const bag = state.dims
   if (!bag || !deltas) return []
@@ -962,10 +995,23 @@ function shiftDims(state, deltas, why = '', ops = {}) {
   const { pick, dropped } = pickDims(rows, max)
   lastDimSkipped = { at: Date.now(), why, keys: dropped }
   const out = []
+  const cap = Number(config().dims?.dailyGainCap) || 0
+  const today = cap > 0 ? todayKey() : ''
+  if (cap > 0 && (!state.dimsGain || state.dimsGain.day !== today)) state.dimsGain = { day: today, bag: {} }
   for (const [k, v] of pick) {
     const before = Number(bag[k]) || 0
-    const after = clamp(Math.round((before + v) * 10) / 10, 0, 100)
+    let step = v
+    if (cap > 0 && step > 0) {
+      const used = Number(state.dimsGain?.bag?.[k]) || 0
+      const room = Math.max(0, cap - used)
+      if (step > room) step = room
+    }
+    const after = clamp(Math.round((before + step) * 10) / 10, 0, 100)
     if (after === before) continue
+    if (cap > 0 && after > before) {
+      const used = Number(state.dimsGain?.bag?.[k]) || 0
+      state.dimsGain.bag[k] = Math.round((used + (after - before)) * 10) / 10
+    }
     bag[k] = after
     out.push({ key: k, from: before, to: after, why })
   }
@@ -1302,6 +1348,24 @@ function tickDims(state, hours, env) {
   if (step) {
     shiftDims(state, { 敏感: step }, step > 0 ? 'libido' : 'libido-fall', { limit: false })
   }
+  // 慢回气：一整天没推到顶，也该往中性退一点。高温不是勋章，是刻度。
+  const RG = config().dims?.regress ?? {}
+  const rate = Number(RG.perHour) || 0
+  if (rate > 0) {
+    const skip = new Set(RG.skip ?? [])
+    const deltas = {}
+    let n = 0
+    for (const k of DIM_ORDER) {
+      if (skip.has(k)) continue
+      const cur = Number(bag[k]) || 0
+      const seed = Number(DIMS_SEED[k]) || 50
+      const d = seed - cur
+      if (Math.abs(d) < 0.1) continue
+      const delta = Math.sign(d) * Math.min(Math.abs(d), rate * hours)
+      if (Math.abs(delta) >= 0.05) { deltas[k] = delta; n += 1 }
+    }
+    if (n) shiftDims(state, deltas, 'regress', { limit: false })
+  }
 }
 
 /** 情绪：事件按自己的寿命退，六格退得更慢——事件没了，余味还在。 */
@@ -1313,6 +1377,8 @@ function tickEmotion(state, now) {
   // 不该把两天的余味也一并冻住。
   const lifeSec = Math.max(0, Math.min(30 * 86400, (now - (Number(state.at) || now)) / 1000))
   const kSec = Number(dsec.kindSec) || 1500
+  // 刺激层单独一个常数：事情过去两分钟就该落下去，不等余味。
+  const tauEvent = Number(dsec.stimulusSec) || 120
   // 六格各走各的：惊是过路的，四十秒就散干净；惧慢些，十分钟。没写的按 kindSec 走。
   // 半衰期填的是分钟，换算成时间常数再进指数——不换算的话「四十分钟半衰」一小时就掉没了。
   const halfOf = dsec.halfOf ?? {}
@@ -1330,7 +1396,7 @@ function tickEmotion(state, now) {
       // 账本被人塞过一个将来的时刻：指数会翻成天文数字，那不是「还剩很多」，是坏数。
       if (Number(ev.at) > now) ev.at = now
       const age = (now - (Number(ev.at) || 0)) / 1000
-      const left = Math.exp(-age / tauOf(ev.kind))
+      const left = Math.exp(-age / tauEvent)
       if (left < 0.02) return false
       ev.left = left
       return true
@@ -1345,6 +1411,9 @@ function tickEmotion(state, now) {
     const k = Math.exp(-lifeSec / tauOf(kk))
     kindBag[kk] = v < 0.5 ? 0 : Math.round(v * k * 10) / 10
   }
+
+  // 候选到点：影子期只记一笔，实名期才按小份落账。
+  tickCandidates(state, now)
 
   // 一整件事过去之后，才轮到八维记账。
   // 不是当场加：当场加等于拿事压人，说不过去；事退了才落。
@@ -1361,6 +1430,140 @@ function tickEmotion(state, now) {
       em.settle = settle.filter((s) => !(s && now >= (Number(s.at) || 0)))
     }
   }
+}
+
+
+/**
+ * 回落的另一头：不是所有情绪都靠时间退，一句哄、一次回来，也能把同一格压下去。
+ * 只动情绪账，不直接改距离、纹、欲望——那些各有各的账。
+ */
+function soothe(state, kind, amount) {
+  const em = state?.emotion
+  if (!em || !kind) return 0
+  const n = Math.max(0, Number(amount) || 0)
+  if (!n) return 0
+  const bag = em.kinds ?? (em.kinds = { joy: 0, anger: 0, sadness: 0, fear: 0, surprise: 0, disgust: 0 })
+  const before = Number(bag[kind]) || 0
+  bag[kind] = Math.max(0, Math.round((before - n) * 10) / 10)
+  // 正在动的那一笔也压一压，不然「最狠」还挂着旧数，像没听见哄。
+  for (const ev of em.events ?? []) {
+    if (!ev || ev.kind !== kind) continue
+    const left = ev.left == null ? 1 : Number(ev.left) || 0
+    const cur = (Number(ev.intensity) || 0) * left
+    const take = Math.min(cur, n)
+    if (take <= 0 || left <= 0) continue
+    ev.intensity = Math.max(0, Math.round(((Number(ev.intensity) || 0) - take / left) * 10) / 10)
+  }
+  return Math.round((before - (Number(bag[kind]) || 0)) * 10) / 10
+}
+
+function sootheGroup(state, group, opts = {}) {
+  if (!group || !state?.emotion) return 0
+  let cut = 0
+  for (const [kind, amount] of Object.entries(group)) cut += soothe(state, kind, amount)
+  const debtCut = Number(opts.debtCut) || 0
+  if (debtCut > 0) state.emotion.debt = Math.max(0, Math.round(((Number(state.emotion.debt) || 0) - debtCut) * 10) / 10)
+  if (cut > 0 || opts.cancelAll || debtCut > 0) {
+    cancelCandidates(state, (opts.cancelAll || debtCut > 0) ? null : Object.keys(group), '被安抚')
+  }
+  return Math.round(cut * 10) / 10
+}
+
+function bareHisText(text) {
+  return String(text || '')
+    .replace(/[（）()「」『』“”"]/g, '')
+    .replace(/\s+/g, '')
+    .trim()
+}
+
+function logCand(state, entry) {
+  const em = state?.emotion
+  if (!em) return
+  const log = Array.isArray(em.candLog) ? em.candLog : (em.candLog = [])
+  log.push({
+    kind: entry.kind,
+    amt: Math.round((Number(entry.amt) || 0) * 10) / 10,
+    why: String(entry.why || '').slice(0, 20),
+    at: Number(entry.at) || Date.now(),
+    mode: entry.mode || 'shadow',
+  })
+  if (log.length > 40) log.splice(0, log.length - 40)
+}
+
+function nominate(state, kind, amount, why, text) {
+  const C = config().emotion?.candidate ?? {}
+  if (C.on === false) return false
+  const em = state?.emotion
+  if (!em) return false
+  const amt = Math.round(clamp(Number(amount) || 0, 0, 20) * 10) / 10
+  if (!amt) return false
+  const cap = Math.max(1, Number(C.cap) || 6)
+  const list = Array.isArray(em.cand) ? em.cand : (em.cand = [])
+  const now = Date.now()
+  if (list.some((c) => c && c.kind === kind && (c.why || '') === (why || '') && now - (Number(c.at) || 0) < 15 * 1000)) return false
+  list.push({ kind, amt, why: String(why || '').slice(0, 20), text: String(text || '').slice(0, 80), at: now })
+  if (list.length > cap) list.splice(0, list.length - cap)
+  return true
+}
+
+/**
+ * 候选到点：影子期只往日志里记一笔，不进情绪账；实名期才按小份落，最高五分。
+ * 宁漏不错——漏一句只是少记，记错一句要花力气撤。
+ */
+function tickCandidates(state, now) {
+  const C = config().emotion?.candidate ?? {}
+  const em = state?.emotion
+  if (!em) return
+  const list = Array.isArray(em.cand) ? em.cand : []
+  if (!list.length) return
+  const ttl = Math.max(0, Number(C.ttlSec ?? 120)) * 1000
+  const keep = []
+  for (const c of list) {
+    if (!c) continue
+    if (now - (Number(c.at) || 0) < ttl) { keep.push(c); continue }
+    if (C.shadow === false) {
+      const n = Math.min(5, Number(c.amt) || 0)
+      if (n > 0) {
+        feel(state, { kind: c.kind, intensity: Math.round(n * 10) / 10, why: c.why || '候选' })
+        logCand(state, { ...c, at: now, mode: 'admit' })
+      } else logCand(state, { ...c, at: now, mode: 'cancel' })
+    } else logCand(state, { ...c, at: now, mode: 'shadow' })
+  }
+  em.cand = keep
+}
+
+function cancelCandidates(state, kinds, why) {
+  const em = state?.emotion
+  if (!em || !Array.isArray(em.cand) || !em.cand.length) return 0
+  const set = kinds == null ? null : new Set(kinds)
+  const keep = []
+  let n = 0
+  for (const c of em.cand) {
+    if (!c) continue
+    if (set && !set.has(c.kind)) { keep.push(c); continue }
+    n += 1
+    logCand(state, { ...c, why: (c.why || '') + (why ? `·${why}` : ''), at: Date.now(), mode: 'cancel' })
+  }
+  em.cand = keep
+  return n
+}
+
+function undoLastCandidate(state) {
+  const em = state?.emotion
+  if (!em) return false
+  const now = Date.now()
+  const cand = Array.isArray(em.cand) ? em.cand : []
+  if (cand.length) {
+    const c = cand.pop()
+    logCand(state, { ...c, why: (c.why || '') + '·撤销', at: now, mode: 'cancel' })
+    return true
+  }
+  const log = Array.isArray(em.candLog) ? em.candLog : []
+  const last = [...log].reverse().find((x) => x && x.mode === 'admit' && now - (Number(x.at) || 0) <= 10 * 60 * 1000)
+  if (!last) return false
+  soothe(state, last.kind, last.amt)
+  logCand(state, { kind: last.kind, amt: last.amt, why: '撤销', at: now, mode: 'undo' })
+  return true
 }
 
 /** 强度取六格最高的那一个，就是这会儿有多冲。 */
@@ -1457,7 +1660,14 @@ function feel(state, input) {
   em.events = em.events.slice(0, Number(E.maxConcurrent) || 2)
 
   const kindBag = em.kinds ?? (em.kinds = { joy: 0, anger: 0, sadness: 0, fear: 0, surprise: 0, disgust: 0 })
-  kindBag[kind] = clamp(Math.round(((Number(kindBag[kind]) || 0) + strength) * 10) / 10, 0, 100)
+  // 快满的时候，同一件事再砸下来也只加一点。不是压情绪，是不让它一直顶在 100。
+  const SAT = E.counter?.saturation ?? {}
+  const softAt = Number(SAT.softAt) || 85
+  const hardAt = Number(SAT.hardAt) || 95
+  let add = strength
+  if ((Number(kindBag[kind]) || 0) >= hardAt) add *= Number(SAT.hardMul) || 0.2
+  else if ((Number(kindBag[kind]) || 0) >= softAt) add *= Number(SAT.softMul) || 0.5
+  kindBag[kind] = clamp(Math.round(((Number(kindBag[kind]) || 0) + add) * 10) / 10, 0, 100)
 
   const S = config().dims?.settle ?? {}
   const heavy = strength >= (Number(S.heavyAbove) || 70)
@@ -1474,7 +1684,7 @@ function feel(state, input) {
     const mul = (Number(S.mult) || 2.5) * (heavy ? (Number(S.heavyMul) || 1.5) : 1) * n
     const delta = {}
     for (const k of keys) delta[k] = map[k] * mul
-    const at = now + (Number(E.decay?.eventSec) || 900) * 1000
+    const at = now + (Number(E.decay?.stimulusSec) || 120) * 1000
     em.settle = [...(em.settle ?? []), { at, delta, why: kind }].slice(-10)
   }
 
@@ -1829,6 +2039,13 @@ function emotionView(em) {
     fierce,
     axes: axesOf(em),
     debt: round0(Number(em?.debt) || 0),
+    // 候选是屏幕上的下划线，不是账：只给看，不落数。
+    cand: (em?.cand ?? []).filter((c) => c && c.kind).map((c) => ({
+      kind: c.kind,
+      label: labels[c.kind] ?? c.kind,
+      amt: round0(Number(c.amt) || 0),
+      why: String(c.why || '').slice(0, 20),
+    })),
   }
 }
 
@@ -1926,6 +2143,12 @@ function senseText(state) {
     if (v.emotion.fierce >= overflowAt) moodLine += '　快装不住'
     if (v.emotion.debt >= 10) moodLine += `　债 ${v.emotion.debt}`
   }
+  const cand = v.emotion.cand ?? []
+  let candLine = ''
+  if (cand.length) {
+    const c = cand[cand.length - 1]
+    candLine = `候选 ${c.why || '一句话'} ${c.label} ${c.amt}`
+  }
 
   // 人话一句：只在真有动静的时候出现。
   const bits = []
@@ -1975,6 +2198,7 @@ function senseText(state) {
     const out = [head, dimsLine]
     if (zonesLine) out.push(zonesLine)
     out.push(moodLine)
+    if (candLine) out.push(candLine)
     if (useBits.length) out.push(useBits.join('，'))
     if (useHint) out.push(useHint)
     return out.filter(Boolean)
@@ -2104,6 +2328,9 @@ function tools(ctx) {
       if (event === '走开') state.awayAt = Date.now()
       else if (state.awayAt) state.awayAt = 0
       advance(state, Date.now())
+      const CC = config().emotion?.counter ?? {}
+      if (event === '走开') sootheGroup(state, CC.leave ?? {})
+      else sootheGroup(state, CC.return ?? {}, { cancelAll: true })
       save(state)
       const tone = {
         靠近: '没碰着，空气先变了。',
@@ -2471,16 +2698,30 @@ const ACTION_TABLE = [...ACTION_WORDS].sort((a, b) => b[0].length - a[0].length)
 // 认部位靠「表里谁先出现」——「双手」的手把胸抢了，就是从这儿来的。
 /** 工具词：说的是用哪儿碰，不是碰到哪儿。剥掉之后还认得出别的格才剥。 */
 const HIS_TOOL_WORDS = ['双手', '两只手', '一只手', '两只', '两手', '指尖', '指腹', '指节', '手掌', '手臂', '手心']
-/** 行为名词：直接说做了什么。落到已有的格子与族上，不另开一套。 */
-const HIS_NOUN_TABLE = [
-  ['口交', 'mouth', '舔'],
-  ['足交', 'foot', '揉'],
-  ['脚交', 'foot', '揉'],
-  ['交尾', 'inside', '插'],
-  ['做爱', 'inside', '插'],
-  ['后入', 'inside', '插'],
-  ['骑乘', 'inside', '插'],
-]
+/**
+ * 行为名词表：不随插件发。私货、专名、一个人自己攒的词，都放同目录的 lexicon.json。
+ * 文件不在就当空表——只认通用动作表；谁要认自己那几路，自己放一份，别提交。
+ * 形状：[[词, 格, 动作], ...]；每行只认前三个。
+ */
+const LEXICON_PATH = join(ROOT, 'lexicon.json')
+let lexiconCache = { mtime: -1, rows: [] }
+function hisNouns() {
+  try {
+    const st = statSync(LEXICON_PATH)
+    if (st.mtimeMs !== lexiconCache.mtime) {
+      const raw = JSON.parse(readFileSync(LEXICON_PATH, 'utf8'))
+      const rows = Array.isArray(raw)
+        ? raw.filter((r) => Array.isArray(r) && r.length >= 3
+          && typeof r[0] === 'string' && r[0].length <= 8
+          && typeof r[1] === 'string' && typeof r[2] === 'string')
+        : []
+      lexiconCache = { mtime: st.mtimeMs, rows }
+    }
+  } catch {
+    lexiconCache = { mtime: -1, rows: [] }
+  }
+  return lexiconCache.rows
+}
 /** 新认的动作落到已登记的那几个名字上，族才不会取空。 */
 const HIS_ACT_ALIAS = {
   伸: '揉', 探: '揉', 滑: '揉', 磨: '揉', 碾: '揉', 撩: '揉', 拨: '揉', 勾: '揉', 抽: '揉',
@@ -2554,7 +2795,7 @@ function distOfText(text, act) {
 /** 一个小句落一处。 */
 function parseHisClause(clause) {
   const text = stripHisTools(clause)
-  for (const [word, zone, act] of HIS_NOUN_TABLE) {
+  for (const [word, zone, act] of hisNouns()) {
     if (text.includes(word)) return { zone, act, strength: strengthOfText(text), dist: '贴肤' }
   }
   const hit = hisActionAt(text)
@@ -2994,6 +3235,8 @@ function applySpeech(state, kind, text) {
 function readHisLine(state, text) {
   const out = { distance: '', skipped: 0 }
   if (!text) return out
+  const CC = config().emotion?.counter ?? {}
+  const CD = config().emotion?.candidate ?? {}
   if (/如果|要是|假如|假设|万一/.test(text)) { out.skipped = 1; return out }
   // 话也压在身上（2026-11-24）：命令落一点温、威胁落一点凉、提旧事焐一下心口。
   // 先判类再落，不然「再不听话就等着」会被尾巴上的「听话」当成夸。
@@ -3004,7 +3247,10 @@ function readHisLine(state, text) {
   }
   // 他夸一句：落一笔喜。夸不是命令，不推八维，只让六格里那一格有光。
   // 威胁句里的「听话」「好看」不算夸——「有你好看」夸的是反话。
-  if (WORD_HIS_PRAISE.test(text) && !WORD_THREAT.test(text)) moodOf(state, 'joy', 12, '被夸了')
+  if (WORD_HIS_PRAISE.test(text) && !WORD_THREAT.test(text)) {
+    moodOf(state, 'joy', 12, '被夸了')
+    sootheGroup(state, CC.goodNews ?? {}, { cancelAll: true })
+  }
   // 一句「恶心」才落厌：这一格本来就窄，宁缺勿滥——判错比不判更假。
   if (WORD_DISGUST.test(text)) moodOf(state, 'disgust', 30, '他说脏')
   // 他说不要她了：怕和哀一起落。这一条线从前根本没有，惧那一格永远是零。
@@ -3012,7 +3258,32 @@ function readHisLine(state, text) {
     moodOf(state, 'fear', 42, '他说不要我了')
     moodOf(state, 'sadness', 36, '他说不要我了')
   }
+  // 哄一句、道个歉：怒和惧各退一截，债也削一点。不是翻篇，是把那口气放掉。
+  if (WORD_SOOTHE.test(text)) sootheGroup(state, CC.soothe ?? {}, { debtCut: CC.debtCut ?? 15 })
+  // 「我回来了」：哀和惧先退一截，人还没走近，这句先算数。
+  if (WORD_RETURN.test(text)) sootheGroup(state, CC.return ?? {}, { cancelAll: true })
+  // 撤销：落错了说一句「不是这个意思」，把刚挂上的那笔退回去。
+  if (CD.undo !== false && /不是这个意思|我没那个意思|别记这个|不是你想的那样/.test(text)) {
+    undoLastCandidate(state)
+    return out
+  }
+  // 候选：形状清楚才提名，先挂两分钟。影子期只记日志，不落账。
+  if (CD.on !== false) {
+    const bare = bareHisText(text)
+    if (CD.castoff && /^(随你|随你吧|你随便|随便你|随你的便)[。.!！]?$/.test(bare) && !/[?？]/.test(text) && !/都行/.test(text)) {
+      nominate(state, 'sadness', Number(CD.castoff.sadness) || 6, '随你', text)
+    }
+    if (CD.jealous && !/[?？吗呢]/.test(text) && !/你/.test(text)
+      && /(她|那个|人家|那姑娘)/.test(text) && /(好看|漂亮|可爱|腿|腰|身材|胸|脸)/.test(text)) {
+      nominate(state, 'anger', Number(CD.jealous.anger) || 8, '夸别人', text)
+      nominate(state, 'sadness', Number(CD.jealous.sadness) || 4, '夸别人', text)
+    }
+    if (CD.busy && !/[?？]/.test(text) && /我在忙|今天没空/.test(text)) {
+      nominate(state, 'sadness', Number(CD.busy.sadness) || 4, '忙', text)
+    }
+  }
   if (AWAY_WORDS.some((w) => text.includes(w))) {
+    sootheGroup(state, CC.leave ?? {})
     // 刚还贴着，这一句就是走开——怕跟哀一起落，比只落一个哀更实在。
     if (state.distance === '贴肤' || state.distance === '隔布') {
       moodOf(state, 'sadness', 5, '他走了')
@@ -3025,6 +3296,7 @@ function readHisLine(state, text) {
     return out
   }
   if (HIS_CLOSE.some((w) => text.includes(w))) {
+    sootheGroup(state, CC.return ?? {}, { cancelAll: true })
     const prev = state.distance
     raiseDistance(state, '隔布')
     out.distance = '隔布'
@@ -3139,6 +3411,9 @@ const WORD_HIS_PRAISE = /乖|好孩子|真棒|做得好|听话|了不起|厉害|
 const WORD_ABANDON = /不要你了|不管你了|别跟着我|滚远点|丢下你/
 /** 厌那一格最窄：只认最直白的脏话，别的都放过。 */
 const WORD_DISGUST = /恶心|脏死了/
+/** 哄和回来：不是落一笔新的，是把旧的那口气压下去。 */
+const WORD_SOOTHE = /对不起|抱歉|是我不好|我错了|别生气|不气了|哄你|哄哄|摸摸头|乖[，,。.]?/
+const WORD_RETURN = /我回来了|回来了|到家了|我来了|到门口|开门/
 // 上一句括号里读到过什么动作。只活在内存里，重启就没了。
 // 它只派一个用处：他同一句话，readHisAction 已经落过手了，读话那一步就别再落一遍。
 let lastHisActionAt = 0
@@ -3148,7 +3423,7 @@ function readMyLine(state, text) {
   const out = { broken: false }
   if (!text) return out
   // 称呼和口癖是各人自己的，通用版一个字都不认。
-  // 从前这里认「主人」和「哼」——那是照着一个人写的，换个角色就全错。
+  // 从前这里认称呼和口癖——那是照着一个人写的，换个角色就全错。
   // 要认，自己往这条分支里加词表；默认留空，宁可不动，也不替人认亲戚。
   // 句子碎了就是撑不住了：三条以上、平均不到九个字。不碰身体，只动脸。
   const lines = text
@@ -3407,6 +3682,8 @@ export const __test = {
   impactOf, contactLink, landContact, contactCfg, zoneOfAction, repeatCountOf,
   SUDDEN_WORDS, SOFT_ZONES, zoneMood, dropDistance, beginMoodBatch, resetMoodClock,
   SCHEMA, wetOf, tenseOf, activeZones, speechKindOf, applySpeech,
+  soothe, sootheGroup, nominate, tickCandidates, cancelCandidates, undoLastCandidate,
+  bareHisText, logCand, hisNouns, tickEmotion, WORD_SOOTHE, WORD_RETURN,
 }
 
 // ---------------------------------------------------------------- 挂

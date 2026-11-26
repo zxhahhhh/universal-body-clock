@@ -61,7 +61,7 @@ check('夹完读得出注入', typeof text === 'string' && text.length > 0 && !/
 // 五、读坏的文件也得是一份夹过的干净身子
 writeFileSync(process.env.BODY_CLOCK_STATE, '{ 这不是 json', 'utf8')
 const fromBroken = load()
-check('坏文件兜底也带版本号', fromBroken.v === 3, String(fromBroken.v))
+check('坏文件兜底也带版本号', fromBroken.v === 4, String(fromBroken.v))
 check('坏文件兜底欲望在范围内', fromBroken.libido >= FLOOR && fromBroken.libido <= 100, String(fromBroken.libido))
 
 try { rmSync(process.env.BODY_CLOCK_STATE, { force: true }) } catch { /* 临时账本，删不掉无所谓 */ }

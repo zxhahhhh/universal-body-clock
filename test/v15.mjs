@@ -40,7 +40,7 @@ console.log('=== 1. 记事这一格进了契约 ===')
 {
   const s = fresh()
   ok('新账本每一格都带 warmth', Object.values(s.zones).every((z) => z.warmth === 50))
-  ok('版本号是 3', SCHEMA === 3, SCHEMA)
+  ok('版本号是 4', SCHEMA === 4, SCHEMA)
   const w = leaves(s).filter((l) => /\.warmth$/.test(l.path))
   ok('契约里多了十二个叶子', w.length === 12, w.length)
   ok('契约默认值五十', spec().zones[2][1].warmth[3] === 50)

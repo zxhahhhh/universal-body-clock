@@ -112,7 +112,11 @@
     "debtFallPerDay": 4,
     "debtCap": 100,
     "sensWeight": 0.4,
-    "decay": { "eventSec": 900, "axisSec": 5400, "intensitySec": 900, "kindSec": 21600, "halfOf": { "surprise": 40, "fear": 600 }, "bodySec": 180 },
+    "decay": { "stimulusSec": 120, "kindSec": 21600, "halfOf": { "joy": 90, "anger": 60, "sadness": 240, "fear": 30, "surprise": 0.6667, "disgust": 60 }, "bodySec": 180 },
+
+    "counter": { "soothe": { "anger": 14, "fear": 8 }, "return": { "sadness": 12, "fear": 10 }, "goodNews": { "sadness": 5, "fear": 3 }, "leave": { "joy": 10 }, "debtCut": 15, "saturation": { "softAt": 85, "softMul": 0.5, "hardAt": 95, "hardMul": 0.2 } },
+
+    "candidate": { "note": "形状清楚才提名，先挂两分钟；影子期只记日志，shadow:false 才落账（最高五分）。", "on": true, "ttlSec": 120, "cap": 6, "shadow": true, "castoff": { "sadness": 6 }, "jealous": { "anger": 8, "sadness": 4 }, "busy": { "sadness": 4 }, "undo": true },
     "axes": {
       "valence": { "label": "愉悦", "min": -1, "max": 1 },
       "arousal": { "label": "唤醒", "min": 0, "max": 100 },
@@ -149,6 +153,8 @@
       { "name": "放松", "note": "人走开就落，被好好安置就涨；八维里最慢的一维，按小时磨，不按次算。它落到底不是「不舒服」，是「没人接着」。" }
     ],
     "maxPerCall": 3,
+    "dailyGainCap": 12,
+    "regress": { "perHour": 0.35, "skip": [] },
     "pushAdd": 3,
     "libidoPush": {
       "note": "欲望过线推敏感。不是一步到位，按档走：越往上推得越快，快到顶就有顶，不许推到一百。欲望落回去，敏感自己慢慢退回来——不留一个下不去的数。",
